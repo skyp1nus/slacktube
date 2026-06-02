@@ -19,6 +19,16 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             ApplicationName = "SlackTube",
         });
 
+    /// <summary>The authenticated account's own channel id + title (channels.list?mine=true, ~1 unit).</summary>
+    public async Task<(string? Id, string? Title)> GetChannelInfoAsync(string refreshToken, CancellationToken ct = default)
+    {
+        var request = BuildService(refreshToken).Channels.List("snippet");
+        request.Mine = true;
+        var response = await request.ExecuteAsync(ct);
+        var item = response.Items?.FirstOrDefault();
+        return (item?.Id, item?.Snippet?.Title);
+    }
+
     /// <summary>
     /// Resumable upload as PRIVATE. <paramref name="onBytes"/> fires during transfer;
     /// <paramref name="onProcessing"/> fires once all bytes are sent (YouTube still transcodes).

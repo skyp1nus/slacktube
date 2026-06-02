@@ -5,8 +5,13 @@ namespace SlackTube.Api.Configuration;
 public sealed class SlackOptions
 {
     public const string Section = "Slack";
+    /// <summary>App-level signing secret (env only — OAuth install does not return it).</summary>
     public string? SigningSecret { get; set; }
-    public string? BotToken { get; set; }
+    // OAuth v2 install app credentials.
+    public string ClientId { get; set; } = "";
+    public string ClientSecret { get; set; } = "";
+    /// <summary>Must match an app-configured redirect URL exactly.</summary>
+    public string RedirectUri { get; set; } = "";
 }
 
 /// <summary>Google OAuth client (one consent covers Drive readonly + YouTube upload).</summary>
@@ -43,6 +48,8 @@ public sealed class AppOptions
 {
     public const string Section = "App";
     public string PublicBaseUrl { get; set; } = "http://localhost:5080";
+    /// <summary>Web admin panel origin — OAuth callbacks bounce the browser back here.</summary>
+    public string AdminPanelUrl { get; set; } = "http://localhost:3000";
     public string TempDownloadDir { get; set; } = "./tmp";
     /// <summary>YouTube daily quota cap in units (default ~10000).</summary>
     public int YouTubeDailyQuotaUnits { get; set; } = 10000;

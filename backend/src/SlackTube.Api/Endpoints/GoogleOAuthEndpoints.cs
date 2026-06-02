@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
 using SlackTube.Api.Services.Google;
@@ -10,46 +12,45 @@ public static class GoogleOAuthEndpoints
 
     public static void MapGoogleOAuthEndpoints(this WebApplication app)
     {
-        // Admin clicks "Connect Google" → browser lands here → redirect to Google consent.
-        app.MapGet("/google/oauth/start", (GoogleOAuthService oauth, HttpResponse res) =>
+        // Admin clicks "Connect Google account" → here → redirect to Google consent.
+        app.MapGet("/google/oauth/start", (GoogleOAuthService oauth, HttpContext http) =>
         {
-            var state = Guid.NewGuid().ToString("N");
-            res.Cookies.Append(StateCookie, state, new CookieOptions
+            var state = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+            http.Response.Cookies.Append(StateCookie, state, new CookieOptions
             {
                 HttpOnly = true,
                 SameSite = SameSiteMode.Lax,
-                Secure = false, // localhost; set true behind HTTPS
+                Secure = http.Request.IsHttps,
                 MaxAge = TimeSpan.FromMinutes(10),
+                Path = "/",
             });
             return Results.Redirect(oauth.BuildConsentUrl(state));
         });
 
-        // Google redirects back here with ?code & ?state.
+        // Google redirects back with ?code & ?state → insert account → bounce to the panel.
         app.MapGet("/google/oauth/callback", async (
-            string? code, string? state, HttpRequest req,
-            GoogleOAuthService oauth, CancellationToken ct) =>
+            string? code, string? state, HttpContext http,
+            GoogleOAuthService oauth, IOptions<AppOptions> appOpt, ILoggerFactory loggerFactory, CancellationToken ct) =>
         {
-            var cookieState = req.Cookies[StateCookie];
-            if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state) || state != cookieState)
-                return Results.BadRequest("Invalid OAuth state — please retry from the admin panel.");
+            var panel = appOpt.Value.AdminPanelUrl.TrimEnd('/');
+            var expected = http.Request.Cookies[StateCookie];
+            http.Response.Cookies.Delete(StateCookie, new CookieOptions { Path = "/" });
+
+            if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state) || string.IsNullOrEmpty(expected) ||
+                !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(state), Encoding.UTF8.GetBytes(expected)))
+                return Results.Redirect($"{panel}/accounts?error=invalid_state");
 
             try
             {
                 await oauth.ExchangeAndStoreAsync(code, ct);
+                return Results.Redirect($"{panel}/accounts?connected=1");
             }
             catch (Exception ex)
             {
-                return Results.Content(Page("❌ Google connection failed", ex.Message), "text/html");
+                loggerFactory.CreateLogger("Google.OAuth").LogError(ex, "Google OAuth callback failed");
+                return Results.Redirect($"{panel}/accounts?error={Uri.EscapeDataString(ex.Message)}");
             }
-
-            return Results.Content(
-                Page("✅ Google connected", "The refresh token was stored (encrypted). You can close this tab and return to the admin panel."),
-                "text/html");
         });
     }
-
-    private static string Page(string title, string body) =>
-        $"<!doctype html><html><head><meta charset=\"utf-8\"><title>SlackTube</title>" +
-        "<style>body{font-family:system-ui;margin:4rem auto;max-width:32rem;text-align:center;color:#222}</style></head>" +
-        $"<body><h2>{title}</h2><p>{System.Net.WebUtility.HtmlEncode(body)}</p></body></html>";
 }

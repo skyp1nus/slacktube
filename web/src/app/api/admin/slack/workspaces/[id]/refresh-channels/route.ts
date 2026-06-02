@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { backendPost, hasSession } from "@/lib/backend";
 
-export async function POST(request: Request) {
+export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await hasSession())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const body = await request.json();
-  const res = await backendPost("/api/admin/slack", body);
+  const { id } = await params;
+  const res = await backendPost(`/api/admin/slack/workspaces/${id}/refresh-channels`);
   return NextResponse.json(await res.json().catch(() => ({})), { status: res.status });
 }

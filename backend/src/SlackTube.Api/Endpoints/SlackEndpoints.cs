@@ -1,34 +1,105 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Hangfire;
+using Microsoft.Extensions.Options;
+using SlackTube.Api.Configuration;
 using SlackTube.Api.Domain;
 using SlackTube.Api.Services.Jobs;
-using SlackTube.Api.Services.Settings;
 using SlackTube.Api.Services.Slack;
 
 namespace SlackTube.Api.Endpoints;
 
 public static class SlackEndpoints
 {
+    private const string StateCookie = "slack_oauth_state";
+    // SlackTube READS messages → history scopes are required (comment-bridge only posted).
+    private const string InstallScopes =
+        "chat:write,channels:read,groups:read,channels:history,groups:history,team:read";
+
     public static void MapSlackEndpoints(this WebApplication app)
     {
         app.MapPost("/slack/events", HandleEventsAsync);
         app.MapPost("/slack/interactivity", HandleInteractivityAsync);
+        app.MapGet("/slack/oauth/start", StartOAuth);            // AllowAnonymous: pre-auth browser hop
+        app.MapGet("/slack/oauth/callback", HandleOAuthCallbackAsync);
     }
+
+    // ---- OAuth v2 install: start → consent ------------------------------------------
+    private static IResult StartOAuth(HttpContext http, IOptions<SlackOptions> opt)
+    {
+        var o = opt.Value;
+        var state = GenerateState();
+        http.Response.Cookies.Append(StateCookie, state, new CookieOptions
+        {
+            HttpOnly = true,
+            SameSite = SameSiteMode.Lax,
+            Secure = http.Request.IsHttps,
+            MaxAge = TimeSpan.FromMinutes(10),
+            Path = "/",
+        });
+
+        var url = "https://slack.com/oauth/v2/authorize"
+            + $"?client_id={Uri.EscapeDataString(o.ClientId)}"
+            + $"&scope={Uri.EscapeDataString(InstallScopes)}"
+            + $"&redirect_uri={Uri.EscapeDataString(o.RedirectUri)}"
+            + $"&state={Uri.EscapeDataString(state)}";
+        return Results.Redirect(url);
+    }
+
+    // ---- OAuth v2 install: callback → exchange + sync → bounce to the panel ----------
+    private static async Task<IResult> HandleOAuthCallbackAsync(
+        HttpContext http,
+        IOptions<SlackOptions> slackOpt,
+        IOptions<AppOptions> appOpt,
+        SlackWorkspaceService workspaces,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        var panel = appOpt.Value.AdminPanelUrl.TrimEnd('/');
+        var code = http.Request.Query["code"].ToString();
+        var state = http.Request.Query["state"].ToString();
+        var slackError = http.Request.Query["error"].ToString();
+
+        var expected = http.Request.Cookies[StateCookie];
+        http.Response.Cookies.Delete(StateCookie, new CookieOptions { Path = "/" });
+
+        if (!string.IsNullOrEmpty(slackError))
+            return Results.Redirect($"{panel}/slack?error={Uri.EscapeDataString(slackError)}");
+        if (string.IsNullOrEmpty(code))
+            return Results.Redirect($"{panel}/slack?error=missing_code");
+        if (string.IsNullOrEmpty(state) || string.IsNullOrEmpty(expected) ||
+            !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(state), Encoding.UTF8.GetBytes(expected)))
+            return Results.Redirect($"{panel}/slack?error=invalid_state");
+
+        try
+        {
+            await workspaces.HandleOAuthCallbackAsync(code, slackOpt.Value.RedirectUri, ct);
+            return Results.Redirect($"{panel}/slack?connected=1");
+        }
+        catch (Exception ex)
+        {
+            loggerFactory.CreateLogger("Slack.OAuth").LogError(ex, "Slack OAuth callback failed");
+            return Results.Redirect($"{panel}/slack?error=oauth_failed");
+        }
+    }
+
+    private static string GenerateState() =>
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
     // ---- Events API: signature → challenge → dedup → enqueue ingest -------------------
     private static async Task<IResult> HandleEventsAsync(
         HttpRequest req,
         SlackSignatureVerifier verifier,
-        ISettingsStore settings,
+        IOptions<SlackOptions> slackOptions,
         IDedupService dedup,
         IBackgroundJobClient backgroundJobs,
         CancellationToken ct)
     {
         var rawBody = await ReadRawBodyAsync(req);
-        var slack = await settings.GetSlackAsync(ct);
-        if (!VerifySignature(req, verifier, slack.SigningSecret, rawBody))
+        if (!VerifySignature(req, verifier, slackOptions.Value.SigningSecret, rawBody))
             return Results.Unauthorized();
 
         using var doc = JsonDocument.Parse(rawBody);
@@ -68,7 +139,7 @@ public static class SlackEndpoints
     private static async Task<IResult> HandleInteractivityAsync(
         HttpRequest req,
         SlackSignatureVerifier verifier,
-        ISettingsStore settings,
+        IOptions<SlackOptions> slackOptions,
         IJobService jobs,
         ICancellationFlags cancelFlags,
         ISlackStatusService status,
@@ -77,8 +148,7 @@ public static class SlackEndpoints
         CancellationToken ct)
     {
         var rawBody = await ReadRawBodyAsync(req);
-        var slackCfg = await settings.GetSlackAsync(ct);
-        if (!VerifySignature(req, verifier, slackCfg.SigningSecret, rawBody))
+        if (!VerifySignature(req, verifier, slackOptions.Value.SigningSecret, rawBody))
             return Results.Unauthorized();
 
         var payloadJson = ExtractFormField(rawBody, "payload");

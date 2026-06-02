@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
-using SlackTube.Api.Domain;
 using SlackTube.Api.Services.Google;
 using SlackTube.Api.Services.Jobs;
 using SlackTube.Api.Services.Settings;
@@ -8,8 +7,7 @@ using SlackTube.Api.Services.Slack;
 
 namespace SlackTube.Api.Endpoints;
 
-public sealed record SetSlackDto(string BotToken, string SigningSecret);
-public sealed record SetChannelDto(string ChannelId);
+public sealed record CreateMappingDto(Guid SlackWorkspaceId, string SlackChannelId, Guid GoogleAccountId);
 
 /// <summary>
 /// Admin API consumed by the Next.js BFF server-side. Guarded by an <c>X-Admin-Token</c> header
@@ -29,42 +27,82 @@ public static class AdminApiEndpoints
         });
 
         admin.MapGet("/status", async (
-            ISettingsStore settings, GoogleOAuthService oauth, IQuotaService quota, CancellationToken ct) =>
+            SlackWorkspaceService workspaces, GoogleOAuthService google, IQuotaService quota, CancellationToken ct) =>
         {
-            var slack = await settings.GetSlackAsync(ct);
-            var channel = await settings.GetListeningChannelAsync(ct);
-            var google = await oauth.GetConnectionAsync(ct);
-            var q = await quota.GetStatusAsync();
+            var wsCount = await workspaces.CountActiveWorkspacesAsync(ct);
+            var conn = await google.GetConnectionAsync(ct);
+            var accountCount = await google.CountAccountsAsync(ct);
+            var defaultAccount = await google.GetDefaultAccountIdAsync(ct);
+            var q = await quota.GetStatusAsync(defaultAccount);
             return Results.Ok(new
             {
-                slackConfigured = slack.IsConfigured,
-                listeningChannelId = channel,
-                google = new { google.Connected, google.Scopes, google.ConnectedAt },
+                slackConfigured = wsCount > 0,
+                workspaceCount = wsCount,
+                google = new { conn.Connected, conn.Scopes, conn.ConnectedAt, accountCount },
                 quota = new { q.UsedUnits, q.CapUnits, q.RemainingUploads, q.TotalUploads },
             });
         });
 
-        admin.MapPost("/slack", async (SetSlackDto dto, ISettingsStore settings, CancellationToken ct) =>
+        // ---- Slack workspaces (OAuth-installed) ----------------------------------------
+        admin.MapGet("/slack/workspaces", async (SlackWorkspaceService ws, CancellationToken ct) =>
+            Results.Ok(await ws.ListWorkspacesAsync(ct)));
+
+        admin.MapGet("/slack/workspaces/{id:guid}/channels", async (Guid id, SlackWorkspaceService ws, CancellationToken ct) =>
+            Results.Ok(await ws.ListChannelsAsync(id, ct)));
+
+        admin.MapPost("/slack/workspaces/{id:guid}/refresh-channels", async (Guid id, SlackWorkspaceService ws, CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(dto.BotToken) || string.IsNullOrWhiteSpace(dto.SigningSecret))
-                return Results.BadRequest("Both botToken and signingSecret are required.");
-            await settings.SetSlackCredentialsAsync(dto.BotToken.Trim(), dto.SigningSecret.Trim(), ct);
-            return Results.Ok(new { saved = true });
+            var channels = await ws.RefreshChannelsAsync(id, ct);
+            return channels is null ? Results.NotFound() : Results.Ok(channels);
         });
 
-        admin.MapGet("/channels", async (SlackClient slack, CancellationToken ct) =>
-            Results.Ok(await slack.ListChannelsAsync(ct)));
+        admin.MapDelete("/slack/workspaces/{id:guid}", async (Guid id, SlackWorkspaceService ws, CancellationToken ct) =>
+            await ws.DeleteWorkspaceAsync(id, ct) ? Results.NoContent() : Results.NotFound());
 
-        admin.MapPost("/channel", async (
-            SetChannelDto dto, ISettingsStore settings, ISlackStatusService status, CancellationToken ct) =>
+        // ---- Google accounts (multi-account) -------------------------------------------
+        admin.MapGet("/google/accounts", async (GoogleOAuthService google, IQuotaService quota, CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(dto.ChannelId))
-                return Results.BadRequest("channelId is required.");
-            await settings.SetListeningChannelAsync(dto.ChannelId.Trim(), ct);
-            await status.RefreshQueueAsync(ct); // (re)post the status message in the chosen channel
-            return Results.Ok(new { saved = true });
+            var accounts = await google.ListAccountsAsync(ct);
+            var result = new List<object>(accounts.Count);
+            foreach (var a in accounts)
+            {
+                var q = await quota.GetStatusAsync(a.Id);
+                result.Add(new
+                {
+                    a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AccountEmail, a.Status, a.CreatedAt,
+                    quota = new { q.UsedUnits, q.RemainingUploads, q.TotalUploads },
+                });
+            }
+            return Results.Ok(result);
         });
 
+        admin.MapDelete("/google/accounts/{id:guid}", async (
+            Guid id, GoogleOAuthService google, ChannelMappingService mappings, CancellationToken ct) =>
+        {
+            if (await mappings.IsAccountMappedAsync(id, ct))
+                return Results.Conflict(new { error = "account_mapped" });
+            return await google.DeleteAccountAsync(id, ct) ? Results.NoContent() : Results.NotFound();
+        });
+
+        // ---- Mapping (channel → account) -----------------------------------------------
+        admin.MapGet("/slack/channels", async (SlackWorkspaceService ws, CancellationToken ct) =>
+            Results.Ok(await ws.ListAllMemberChannelsAsync(ct)));
+
+        admin.MapGet("/mappings", async (ChannelMappingService mappings, CancellationToken ct) =>
+            Results.Ok(await mappings.ListAsync(ct)));
+
+        admin.MapPost("/mappings", async (CreateMappingDto dto, ChannelMappingService mappings, ISlackStatusService status, CancellationToken ct) =>
+        {
+            var (ok, error) = await mappings.CreateAsync(dto.SlackWorkspaceId, dto.SlackChannelId, dto.GoogleAccountId, ct);
+            if (!ok) return Results.Conflict(new { error });
+            await status.RefreshQueueAsync(ct); // post the status message in the newly mapped channel
+            return Results.Ok(new { created = true });
+        });
+
+        admin.MapDelete("/mappings/{id:guid}", async (Guid id, ChannelMappingService mappings, CancellationToken ct) =>
+            await mappings.DeleteAsync(id, ct) ? Results.NoContent() : Results.NotFound());
+
+        // ---- Job history ----------------------------------------------------------------
         admin.MapGet("/jobs", async (IJobService jobs, CancellationToken ct) =>
         {
             var history = await jobs.GetHistoryAsync(50, ct);

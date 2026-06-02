@@ -14,7 +14,8 @@ public sealed record NewJob(
     string? Title,
     string? Description,
     List<string> Tags,
-    bool RequiresConfirmation);
+    bool RequiresConfirmation,
+    Guid? GoogleAccountId);
 
 public sealed record StatusSnapshot(
     UploadJob? Active,
@@ -28,7 +29,7 @@ public interface IJobService
     Task<UploadJob?> GetAsync(Guid id, CancellationToken ct = default);
     Task TransitionAsync(UploadJob job, JobState to, string? note = null, CancellationToken ct = default);
     Task SaveAsync(UploadJob job, CancellationToken ct = default);
-    Task<StatusSnapshot> GetStatusSnapshotAsync(int recentCount = 5, CancellationToken ct = default);
+    Task<StatusSnapshot> GetStatusSnapshotAsync(string slackChannelId, int recentCount = 5, CancellationToken ct = default);
     Task<IReadOnlyList<UploadJob>> GetHistoryAsync(int take = 50, CancellationToken ct = default);
 }
 
@@ -45,6 +46,7 @@ public sealed class JobService(AppDbContext db) : IJobService
             SlackUserId = i.UserId,
             SlackMessageTs = i.MessageTs,
             DriveFileId = i.DriveFileId,
+            GoogleAccountId = i.GoogleAccountId,
             OriginalFileName = i.OriginalFileName,
             Title = i.Title,
             Description = i.Description,
@@ -89,25 +91,28 @@ public sealed class JobService(AppDbContext db) : IJobService
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<StatusSnapshot> GetStatusSnapshotAsync(int recentCount = 5, CancellationToken ct = default)
+    public async Task<StatusSnapshot> GetStatusSnapshotAsync(string slackChannelId, int recentCount = 5, CancellationToken ct = default)
     {
         var active = await db.Jobs.AsNoTracking()
-            .Where(j => j.State == JobState.Downloading
-                     || j.State == JobState.Uploading
-                     || j.State == JobState.Processing)
+            .Where(j => j.SlackChannelId == slackChannelId
+                     && (j.State == JobState.Downloading
+                      || j.State == JobState.Uploading
+                      || j.State == JobState.Processing))
             .OrderByDescending(j => j.UpdatedAt)
             .FirstOrDefaultAsync(ct);
 
         var queued = await db.Jobs.AsNoTracking()
-            .Where(j => j.State == JobState.Queued && (!j.RequiresConfirmation || j.Confirmed == true))
+            .Where(j => j.SlackChannelId == slackChannelId
+                     && j.State == JobState.Queued && (!j.RequiresConfirmation || j.Confirmed == true))
             .OrderBy(j => j.CreatedAt)
             .ToListAsync(ct);
 
         var recent = await db.Jobs.AsNoTracking()
-            .Where(j => j.State == JobState.Done
-                     || j.State == JobState.Cancelled
-                     || j.State == JobState.Failed
-                     || j.State == JobState.Blocked)
+            .Where(j => j.SlackChannelId == slackChannelId
+                     && (j.State == JobState.Done
+                      || j.State == JobState.Cancelled
+                      || j.State == JobState.Failed
+                      || j.State == JobState.Blocked))
             .OrderByDescending(j => j.UpdatedAt)
             .Take(recentCount)
             .ToListAsync(ct);

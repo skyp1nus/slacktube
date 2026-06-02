@@ -18,6 +18,8 @@ public class UploadJob
 
     // ---- Parsed payload --------------------------------------------------------------
     public string DriveFileId { get; set; } = default!;
+    /// <summary>Target Google account, resolved from the channel mapping (null → default account).</summary>
+    public Guid? GoogleAccountId { get; set; }
     /// <summary>YouTube title — derived from the downloaded file name (set after download).</summary>
     public string? Title { get; set; }
     public string? Description { get; set; }

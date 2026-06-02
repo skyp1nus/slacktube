@@ -9,14 +9,21 @@ namespace SlackTube.Api.Services.Google;
 
 public sealed record GoogleConnection(bool Connected, string? Scopes, DateTimeOffset? ConnectedAt);
 
-/// <summary>Drives the one-time admin consent and persists the encrypted refresh token.</summary>
+public sealed record GoogleAccountDto(
+    Guid Id, string Label, string? YouTubeChannelId, string? YouTubeChannelTitle,
+    string? AccountEmail, string Status, DateTimeOffset CreatedAt);
+
+/// <summary>
+/// Manages connected Google/YouTube accounts. Each consent INSERTS a new account (multi-account),
+/// fetching the channel id+title for display. Refresh tokens are stored encrypted.
+/// </summary>
 public sealed class GoogleOAuthService(
     GoogleCredentialFactory factory,
     IOptions<GoogleOptions> options,
     AppDbContext db,
-    ISecretProtector protector)
+    ISecretProtector protector,
+    YouTubeUploadService youtube)
 {
-    /// <summary>Consent URL to redirect the admin's browser to. <paramref name="state"/> guards CSRF.</summary>
     public string BuildConsentUrl(string state)
     {
         var flow = factory.CreateFlow();
@@ -25,40 +32,71 @@ public sealed class GoogleOAuthService(
         return request.Build().AbsoluteUri;
     }
 
-    /// <summary>Exchanges the callback code for tokens and stores the encrypted refresh token.</summary>
-    public async Task ExchangeAndStoreAsync(string code, CancellationToken ct)
+    /// <summary>Exchanges the code, fetches the channel id/title, and INSERTS a new account.</summary>
+    public async Task<GoogleAccount> ExchangeAndStoreAsync(string code, CancellationToken ct)
     {
         var flow = factory.CreateFlow();
-        var token = await flow.ExchangeCodeForTokenAsync(
-            "user", code, options.Value.RedirectUri, ct);
-
+        var token = await flow.ExchangeCodeForTokenAsync("user", code, options.Value.RedirectUri, ct);
         if (string.IsNullOrEmpty(token.RefreshToken))
             throw new InvalidOperationException(
                 "Google returned no refresh token. Revoke prior access or re-consent (prompt=consent).");
 
-        var entity = await db.GoogleTokens.FirstOrDefaultAsync(ct);
-        if (entity is null)
+        string? channelId = null, channelTitle = null;
+        try { (channelId, channelTitle) = await youtube.GetChannelInfoAsync(token.RefreshToken, ct); }
+        catch { /* channel lookup is best-effort; the account still works for upload */ }
+
+        var now = DateTimeOffset.UtcNow;
+        var account = new GoogleAccount
         {
-            entity = new GoogleToken { CreatedAt = DateTimeOffset.UtcNow };
-            db.GoogleTokens.Add(entity);
-        }
-        entity.EncryptedRefreshToken = protector.Protect(token.RefreshToken);
-        entity.Scopes = string.Join(' ', GoogleCredentialFactory.Scopes);
-        entity.UpdatedAt = DateTimeOffset.UtcNow;
+            Label = channelTitle ?? "YouTube account",
+            YouTubeChannelId = channelId,
+            YouTubeChannelTitle = channelTitle,
+            EncryptedRefreshToken = protector.Protect(token.RefreshToken),
+            Scopes = string.Join(' ', GoogleCredentialFactory.Scopes),
+            Status = "Active",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.GoogleAccounts.Add(account);
         await db.SaveChangesAsync(ct);
+        return account;
     }
 
-    /// <summary>Decrypted refresh token, or null when Google is not connected yet.</summary>
-    public async Task<string?> GetRefreshTokenAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<GoogleAccountDto>> ListAccountsAsync(CancellationToken ct = default) =>
+        await db.GoogleAccounts.AsNoTracking()
+            .OrderBy(a => a.CreatedAt)
+            .Select(a => new GoogleAccountDto(
+                a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AccountEmail, a.Status, a.CreatedAt))
+            .ToListAsync(ct);
+
+    public Task<GoogleAccount?> GetAccountAsync(Guid id, CancellationToken ct = default) =>
+        db.GoogleAccounts.FirstOrDefaultAsync(a => a.Id == id, ct);
+
+    /// <summary>The default account (oldest) — used until per-channel mapping (Feature 3) is set.</summary>
+    public Task<Guid?> GetDefaultAccountIdAsync(CancellationToken ct = default) =>
+        db.GoogleAccounts.AsNoTracking().OrderBy(a => a.CreatedAt).Select(a => (Guid?)a.Id).FirstOrDefaultAsync(ct);
+
+    public async Task<string?> GetRefreshTokenAsync(Guid accountId, CancellationToken ct = default)
     {
-        var t = await db.GoogleTokens.AsNoTracking().FirstOrDefaultAsync(ct);
-        return protector.TryUnprotect(t?.EncryptedRefreshToken);
+        var enc = await db.GoogleAccounts.AsNoTracking()
+            .Where(a => a.Id == accountId).Select(a => a.EncryptedRefreshToken).FirstOrDefaultAsync(ct);
+        return protector.TryUnprotect(enc);
     }
+
+    public async Task<bool> DeleteAccountAsync(Guid id, CancellationToken ct = default)
+    {
+        var account = await db.GoogleAccounts.FirstOrDefaultAsync(a => a.Id == id, ct);
+        if (account is null) return false;
+        db.GoogleAccounts.Remove(account);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public Task<int> CountAccountsAsync(CancellationToken ct = default) => db.GoogleAccounts.CountAsync(ct);
 
     public async Task<GoogleConnection> GetConnectionAsync(CancellationToken ct = default)
     {
-        var t = await db.GoogleTokens.AsNoTracking().FirstOrDefaultAsync(ct);
-        var connected = protector.TryUnprotect(t?.EncryptedRefreshToken) is not null;
-        return new GoogleConnection(connected, t?.Scopes, t?.UpdatedAt);
+        var first = await db.GoogleAccounts.AsNoTracking().OrderBy(a => a.CreatedAt).FirstOrDefaultAsync(ct);
+        return new GoogleConnection(first is not null, first?.Scopes, first?.CreatedAt);
     }
 }

@@ -1,28 +1,30 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using StackExchange.Redis;
 using SlackTube.Api.Domain;
 using SlackTube.Api.Services.Jobs;
-using SlackTube.Api.Services.Settings;
 
 namespace SlackTube.Api.Services.Slack;
 
 public interface ISlackStatusService
 {
-    /// <summary>Queue changed: delete the old status message and repost a fresh one so it pops
-    /// back to the bottom of the channel.</summary>
+    /// <summary>Queue changed: for each mapped channel, delete the old status message and repost a
+    /// fresh one so it pops back to the bottom.</summary>
     Task RefreshQueueAsync(CancellationToken ct = default);
 
-    /// <summary>Active job progressed: edit the status message in place (throttled).</summary>
+    /// <summary>Active job progressed: edit that job's channel status message in place (throttled).</summary>
     Task UpdateProgressAsync(Guid jobId, CancellationToken ct = default);
 }
 
 /// <summary>
-/// Singleton. Every publish runs inside its OWN DI scope (own DbContext) and is serialized by a
-/// semaphore, so the high-frequency progress callbacks firing on the worker thread never race the
-/// worker's own scoped DbContext. Throttle: in-place updates at most every 2.5s AND ≥5% delta
-/// (phase changes always pass).
+/// Singleton. One status message PER mapped channel. Each publish runs in its own DI scope (own
+/// DbContext) and is serialized by a semaphore so the high-frequency progress callbacks never race
+/// the worker's DbContext. The current message ts is kept per channel in Redis. Throttle is
+/// per-channel: in-place updates at most every 2.5s AND ≥5% delta (phase changes always pass).
 /// </summary>
 public sealed class SlackStatusService(
     IServiceScopeFactory scopeFactory,
+    IConnectionMultiplexer redis,
     IProgressTracker progress,
     ILogger<SlackStatusService> logger) : ISlackStatusService
 {
@@ -30,90 +32,100 @@ public sealed class SlackStatusService(
     private const int MinPercentDelta = 5;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly object _throttleLock = new();
-    private DateTimeOffset _lastUpdate = DateTimeOffset.MinValue;
-    private int _lastPercent = -1;
-    private string? _lastPhase;
+    private readonly ConcurrentDictionary<string, (DateTimeOffset At, int Percent, string? Phase)> _throttle = new();
 
     public async Task RefreshQueueAsync(CancellationToken ct = default)
-    {
-        ResetThrottle();
-        await PublishAsync(repost: true, ct);
-    }
-
-    public async Task UpdateProgressAsync(Guid jobId, CancellationToken ct = default)
-    {
-        var p = progress.Get(jobId);
-        if (p is null) return;
-        if (!ShouldUpdate(p.Percent, p.Phase)) return;
-        await PublishAsync(repost: false, ct);
-    }
-
-    private async Task PublishAsync(bool repost, CancellationToken ct)
     {
         if (!await _gate.WaitAsync(TimeSpan.FromSeconds(10), ct)) return;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var sp = scope.ServiceProvider;
-            var settings = sp.GetRequiredService<ISettingsStore>();
-
-            var channel = await settings.GetListeningChannelAsync(ct);
-            if (string.IsNullOrEmpty(channel)) return;
-
-            var view = await BuildViewAsync(sp, ct);
-            var (text, blocks) = SlackBlocks.Status(view);
-            var slack = sp.GetRequiredService<SlackClient>();
-            var ts = await settings.GetStatusMessageTsAsync(ct);
-
-            if (repost)
+            var routes = await sp.GetRequiredService<ChannelMappingService>().ListRoutesAsync(ct);
+            foreach (var r in routes)
             {
-                if (!string.IsNullOrEmpty(ts))
-                    await slack.DeleteMessageAsync(channel, ts, ct);
-                var newTs = await slack.PostMessageAsync(channel, text, blocks, ct: ct);
-                await settings.SetStatusMessageTsAsync(newTs, ct);
-            }
-            else if (!string.IsNullOrEmpty(ts))
-            {
-                await slack.UpdateMessageAsync(channel, ts, text, blocks, ct);
-            }
-            else
-            {
-                var newTs = await slack.PostMessageAsync(channel, text, blocks, ct: ct);
-                await settings.SetStatusMessageTsAsync(newTs, ct);
+                _throttle.TryRemove(r.SlackChannelId, out _); // reposting resets the throttle
+                await PublishChannelAsync(sp, r.SlackChannelId, r.GoogleAccountId, repost: true, ct);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) { logger.LogWarning(ex, "Slack status refresh failed"); }
+        finally { _gate.Release(); }
+    }
+
+    public async Task UpdateProgressAsync(Guid jobId, CancellationToken ct = default)
+    {
+        var p = progress.Get(jobId);
+        if (p is null) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var sp = scope.ServiceProvider;
+        var job = await sp.GetRequiredService<IJobService>().GetAsync(jobId, ct);
+        if (job is null) return;
+        if (!ShouldUpdate(job.SlackChannelId, p.Percent, p.Phase)) return;
+
+        if (!await _gate.WaitAsync(TimeSpan.FromSeconds(10), ct)) return;
+        try
         {
-            logger.LogWarning(ex, "Slack status publish failed");
+            await PublishChannelAsync(sp, job.SlackChannelId, job.GoogleAccountId, repost: false, ct);
         }
-        finally
+        catch (Exception ex) { logger.LogWarning(ex, "Slack status update failed"); }
+        finally { _gate.Release(); }
+    }
+
+    private async Task PublishChannelAsync(
+        IServiceProvider sp, string channelId, Guid? accountId, bool repost, CancellationToken ct)
+    {
+        var botToken = await sp.GetRequiredService<SlackWorkspaceService>().GetBotTokenForChannelAsync(channelId, ct);
+        if (string.IsNullOrEmpty(botToken)) return;
+
+        var view = await BuildViewAsync(sp, channelId, accountId, ct);
+        var (text, blocks) = SlackBlocks.Status(view);
+        var slack = sp.GetRequiredService<SlackClient>();
+
+        var db = redis.GetDatabase();
+        var tsKey = StatusTsKey(channelId);
+        var ts = (string?)await db.StringGetAsync(tsKey);
+
+        if (repost)
         {
-            _gate.Release();
+            if (!string.IsNullOrEmpty(ts))
+                await slack.DeleteMessageAsync(botToken, channelId, ts, ct);
+            var newTs = await slack.PostMessageAsync(botToken, channelId, text, blocks, ct: ct);
+            if (newTs is not null) await db.StringSetAsync(tsKey, newTs);
+            else await db.KeyDeleteAsync(tsKey);
+        }
+        else if (!string.IsNullOrEmpty(ts))
+        {
+            await slack.UpdateMessageAsync(botToken, channelId, ts, text, blocks, ct);
+        }
+        else
+        {
+            var newTs = await slack.PostMessageAsync(botToken, channelId, text, blocks, ct: ct);
+            if (newTs is not null) await db.StringSetAsync(tsKey, newTs);
         }
     }
 
-    private static async Task<StatusView> BuildViewAsync(IServiceProvider sp, CancellationToken ct)
+    private static async Task<StatusView> BuildViewAsync(
+        IServiceProvider sp, string channelId, Guid? accountId, CancellationToken ct)
     {
         var jobs = sp.GetRequiredService<IJobService>();
         var quotaSvc = sp.GetRequiredService<IQuotaService>();
         var progress = sp.GetRequiredService<IProgressTracker>();
 
-        var snap = await jobs.GetStatusSnapshotAsync(5, ct);
-        var quota = await quotaSvc.GetStatusAsync();
+        var snap = await jobs.GetStatusSnapshotAsync(channelId, 5, ct);
+        var quota = await quotaSvc.GetStatusAsync(accountId);
 
         ActiveJobView? active = null;
         if (snap.Active is { } a)
         {
             var p = progress.Get(a.Id);
-            var processing = a.State == JobState.Processing;
             active = new ActiveJobView(
                 DisplayName(a),
                 PhaseLabel(a.State),
                 p?.Percent ?? 0,
                 p?.BytesTransferred ?? a.BytesTransferred,
                 p?.BytesTotal ?? a.BytesTotal,
-                processing);
+                a.State == JobState.Processing);
         }
 
         var queued = snap.Queued.Select(q => new QueuedJobView(q.Id, DisplayName(q))).ToList();
@@ -124,8 +136,9 @@ public sealed class SlackStatusService(
         return new StatusView(quota.RemainingUploads, quota.TotalUploads, active, queued, recent);
     }
 
-    private static string DisplayName(UploadJob j) =>
-        j.OriginalFileName ?? j.Title ?? "video";
+    private static string StatusTsKey(string channelId) => $"slacktube:status:ts:{channelId}";
+
+    private static string DisplayName(UploadJob j) => j.OriginalFileName ?? j.Title ?? "video";
 
     private static string PhaseLabel(JobState s) => s switch
     {
@@ -135,34 +148,19 @@ public sealed class SlackStatusService(
         _ => s.ToString(),
     };
 
-    // ---- throttle --------------------------------------------------------------------
-    private bool ShouldUpdate(int percent, string? phase)
+    private bool ShouldUpdate(string channelId, int percent, string? phase)
     {
-        lock (_throttleLock)
-        {
-            var now = DateTimeOffset.UtcNow;
-            var phaseChanged = phase != _lastPhase;
-            var enoughTime = now - _lastUpdate >= MinInterval;
-            var enoughDelta = Math.Abs(percent - _lastPercent) >= MinPercentDelta;
+        var now = DateTimeOffset.UtcNow;
+        var prev = _throttle.TryGetValue(channelId, out var v) ? v : (At: DateTimeOffset.MinValue, Percent: -1, Phase: (string?)null);
+        var phaseChanged = phase != prev.Phase;
+        var enoughTime = now - prev.At >= MinInterval;
+        var enoughDelta = Math.Abs(percent - prev.Percent) >= MinPercentDelta;
 
-            if (phaseChanged || (enoughTime && enoughDelta))
-            {
-                _lastUpdate = now;
-                _lastPercent = percent;
-                _lastPhase = phase;
-                return true;
-            }
-            return false;
-        }
-    }
-
-    private void ResetThrottle()
-    {
-        lock (_throttleLock)
+        if (phaseChanged || (enoughTime && enoughDelta))
         {
-            _lastUpdate = DateTimeOffset.MinValue;
-            _lastPercent = -1;
-            _lastPhase = null;
+            _throttle[channelId] = (now, percent, phase);
+            return true;
         }
+        return false;
     }
 }

@@ -1,12 +1,12 @@
 # SlackTube
 
-Automated publishing of videos to a **single YouTube channel** from a **single Slack
-channel**. Someone posts a templated message containing a Google Drive video link, tags,
-and a description; a bot downloads the video from Drive, uploads it to YouTube as
-**private**, and reports back in Slack with a live, updating queue + progress.
+Automated publishing of videos to YouTube from Slack. Someone posts a templated message
+containing a Google Drive video link, tags, and a description; a bot downloads the video
+from Drive, uploads it to YouTube as **private**, and reports back in Slack with a live,
+updating queue + progress.
 
-> MVP. Single Slack channel → single YouTube channel. Built to be extended, not to scale
-> to multiple channels/networks (see [Out of scope](#out-of-scope)).
+Slack workspaces are connected via **OAuth install**; multiple **Google/YouTube accounts**
+can be connected; and a **mapping** routes each Slack channel to a specific account.
 
 ---
 
@@ -17,16 +17,18 @@ A single ASP.NET (.NET 10) process hosts both the HTTP API **and** the Hangfire 
 ```
 Slack  ──/slack/events──────►  verify sig → dedup(event_id) → ACK<3s → enqueue ingest
        ──/slack/interactivity►  verify sig → cancel / confirm / decline buttons
-Google ──/google/oauth/*─────►  consent → store ENCRYPTED refresh token
+       ──/slack/oauth/*────────►  OAuth v2 install → store workspace + ENCRYPTED bot token
+Google ──/google/oauth/*─────►  consent → store ENCRYPTED refresh token (one per account)
 
 Hangfire pipeline (durable, survives restarts):
-  ① SlackIngestService  parse template → validate vs Drive → confirm OR enqueue upload
+  ① SlackIngestService  resolve channel→account mapping → parse → validate vs Drive →
+                        confirm OR enqueue upload (tagged with the target Google account)
   ② UploadJobHandler    cancel-check → Drive download → quota guard → YouTube upload
                         → live Slack status (delete+repost on queue change, throttled
-                          chat.update during transfer)
+                          chat.update during transfer), all per the job's account/channel
 
-Stores:  PostgreSQL (jobs + state history, encrypted tokens, settings)
-         Redis      (event_id dedup TTL, daily YouTube quota counter, cancel flags)
+Stores:  PostgreSQL (workspaces+channels, google accounts, mappings, jobs+history)
+         Redis      (event_id dedup TTL, per-account daily quota, cancel flags, status ts)
 ```
 
 | Layer | Tech |
@@ -81,8 +83,8 @@ docker compose up --build
 Override the dev defaults with env vars (or a root `.env` that compose reads) before `up`:
 `TOKEN_ENCRYPTION_KEY`, `ADMIN_USER`, `ADMIN_PASSWORD`, `BACKEND_ADMIN_TOKEN`,
 `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`,
-`SLACK_BOT_TOKEN`. Slack + Google can instead be configured later from the admin panel. EF
-migrations auto-apply on API startup.
+`SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`. Slack + Google are then connected from the admin
+panel. EF migrations auto-apply on API startup.
 
 Stop with `docker compose down` (add `-v` to also drop the Postgres volume).
 
@@ -139,11 +141,13 @@ Useful endpoints: `GET /health`, Hangfire dashboard at `/hangfire` (local-reques
 | `ConnectionStrings__Postgres` | Postgres connection string |
 | `ConnectionStrings__Redis` | Redis connection string |
 | `TokenEncryption__Key` | **Required.** ≥16-char secret; AES key for encrypting tokens at rest |
-| `Slack__SigningSecret`, `Slack__BotToken` | Optional here — can be set from the admin panel instead (stored encrypted) |
+| `Slack__SigningSecret` | App signing secret (env-only; verifies request signatures) |
+| `Slack__ClientId` / `Slack__ClientSecret` / `Slack__RedirectUri` | Slack OAuth-install app (redirect = `…/slack/oauth/callback`) |
 | `Google__ClientId`, `Google__ClientSecret`, `Google__RedirectUri` | Google OAuth client (redirect must match the console exactly) |
 | `Admin__Username`, `Admin__Password` | Single-admin login (also usable as the admin-API key) |
 | `Admin__ApiKey` | Token the web panel sends as `X-Admin-Token` (falls back to `Admin__Password`) |
 | `App__PublicBaseUrl` | Public URL of the backend (for OAuth redirect/links) |
+| `App__AdminPanelUrl` | Web panel origin — OAuth callbacks bounce the browser back here |
 | `App__TempDownloadDir` | Where Drive files are streamed before upload (cleaned up after each job) |
 | `App__YouTubeDailyQuotaUnits` / `App__YouTubeUploadCostUnits` | Quota cap (10000) / cost per upload (1600) → ~6/day |
 
@@ -158,47 +162,65 @@ bun install
 bun run dev                     # → http://localhost:3000
 ```
 
-Sign in → **Connect Slack** (bot token + signing secret) → **Connect Google** (one-time
-consent) → **Listening channel** (pick the channel). Job history + connection status are
-shown on the dashboard.
+Sign in, then: **Slack** tab → *Connect Slack* (OAuth install) and invite the bot to your
+channels → **Accounts** tab → *Connect Google account* (one or more) → **Mapping** tab →
+route each Slack channel to a Google account. The dashboard shows connection status + job
+history.
 
 ---
 
-## 4. Slack app setup
+## 4. Slack app setup (OAuth install)
 
-1. Create a Slack app → **OAuth & Permissions** → bot scopes:
-   `chat:write`, `channels:read`, `groups:read`, `channels:history`, `groups:history`.
-2. Install to the workspace, copy the **Bot User OAuth Token** (`xoxb-…`) and the
-   **Signing Secret**.
-3. **Event Subscriptions** → Request URL `https://<public-backend>/slack/events` →
-   subscribe to bot event `message.channels` (and `message.groups` for private channels).
+1. Create a Slack app. From **Basic Information** copy **Client ID**, **Client Secret**, and
+   **Signing Secret** → `Slack__ClientId` / `Slack__ClientSecret` / `Slack__SigningSecret`.
+2. **OAuth & Permissions** → Redirect URLs: add `https://<public-backend>/slack/oauth/callback`
+   (matches `Slack__RedirectUri`). Bot token scopes:
+   `chat:write,channels:read,groups:read,channels:history,groups:history,team:read`.
+3. **Event Subscriptions** → Request URL `https://<public-backend>/slack/events` → subscribe to
+   bot events `message.channels` (+ `message.groups` for private channels).
 4. **Interactivity & Shortcuts** → Request URL `https://<public-backend>/slack/interactivity`.
-5. Invite the bot to the target channel.
-6. Enter the bot token + signing secret in the admin panel, then select the channel.
+5. In the admin panel **Slack** tab click **Connect Slack** → approve the install. Invite the
+   bot to each channel, then **Refresh channels** (the bot only sees channels it has joined).
 
-> Local dev: expose `http://localhost:5080` with a tunnel (e.g. `ngrok http 5080`) and use
-> the public URL for the Slack Request URLs.
+> Local dev: expose `http://localhost:5080` with a tunnel (e.g. `ngrok http 5080`) and use the
+> public URL for the Redirect URL + Request URLs.
 
 ---
 
-## 5. Google OAuth setup
+## 5. Google accounts (multiple)
 
 1. Google Cloud console → enable **YouTube Data API v3** + **Google Drive API**.
 2. Create an **OAuth client (Web application)**; add Authorized redirect URI
    `http://localhost:5080/google/oauth/callback` (must match `Google__RedirectUri`).
 3. Put client id/secret in the backend config.
-4. In the admin panel click **Connect Google** — consent once with the **YouTube channel
-   account**. Scopes requested: `youtube.upload` + `drive.readonly`. The refresh token is
-   stored **encrypted** (AES-256-GCM). One consent covers both download and upload.
+4. In the admin panel **Accounts** tab click **Connect Google account** — consent with a
+   YouTube channel account. Scopes: `youtube.upload` + `drive.readonly`. **Each consent adds a
+   new account** (repeat for more channels); the channel id+title are fetched for display and
+   the refresh token is stored **encrypted** (AES-256-GCM). One consent covers download + upload.
 
-> `youtube.upload` is a sensitive scope; for production the OAuth app must pass Google
-> verification. For testing, add the channel account as a Test User on the consent screen.
+> Quota note: YouTube quota is enforced **per Google Cloud project (OAuth client)**, not per
+> channel — accounts sharing one OAuth client share the daily ~6 uploads. A true per-account
+> quota needs a separate Cloud project + OAuth client per account. `youtube.upload` is a
+> sensitive scope (production needs Google verification; for testing add the account as a Test
+> User on the consent screen).
+
+---
+
+## 6. Mapping (channel → account)
+
+In the admin panel **Mapping** tab, pick a synced Slack channel + a connected Google account
+and create a mapping:
+
+- The bot acts only on messages in **mapped** channels (others are ignored).
+- An upload posted in a channel goes to that channel's mapped account — its refresh token and
+  its quota counter; the live status message is posted with that workspace's bot token.
+- One Slack channel maps to exactly one account; an account may receive from many channels.
 
 ---
 
 ## Upload template
 
-Post in the listening channel (labels are case-insensitive; the multiline
+Post in a mapped channel (labels are case-insensitive; the multiline
 **Description** must come last):
 
 ```
@@ -220,9 +242,9 @@ Any number of lines, links, emoji 🎉
 
 ### Live status message
 
-One Block Kit message in the channel shows remaining quota, the active job with a text
-progress bar, queued jobs (each with a ✖ Cancel button), and recently completed jobs with
-their YouTube link. It is **deleted + reposted** when the queue changes (so it stays at the
+One Block Kit message **per mapped channel** shows that account's remaining quota, the active
+job with a text progress bar, queued jobs (each with a ✖ Cancel button), and recently completed
+jobs with their YouTube link. It is **deleted + reposted** when the queue changes (so it stays at the
 bottom) and **edited in place** (throttled: ≥2.5 s **and** ≥5 %) during an active upload.
 After 100 % bytes it shows “YouTube processing…”.
 
@@ -271,5 +293,5 @@ cd web && bun run build                      # type-check + production build
 ## Out of scope
 
 Editing/deleting YouTube videos from the bot · thumbnail/category/playlist/visibility fields
-(parser is built to extend, not implemented) · multiple YouTube or Slack channels · other
-social networks · the SignalR live dashboard.
+(parser is built to extend, not implemented) · other social networks · the SignalR live
+dashboard · comment-bridge's SlackNet / EncryptedStringConverter / multi-user auth.

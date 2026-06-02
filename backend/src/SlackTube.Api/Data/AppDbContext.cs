@@ -9,6 +9,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<JobStateHistory> JobHistory => Set<JobStateHistory>();
     public DbSet<GoogleToken> GoogleTokens => Set<GoogleToken>();
     public DbSet<AppSettings> Settings => Set<AppSettings>();
+    public DbSet<SlackWorkspace> SlackWorkspaces => Set<SlackWorkspace>();
+    public DbSet<SlackChannel> SlackChannels => Set<SlackChannel>();
+    public DbSet<GoogleAccount> GoogleAccounts => Set<GoogleAccount>();
+    public DbSet<ChannelMapping> ChannelMappings => Set<ChannelMapping>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -25,6 +29,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
            .WithOne(h => h.Job!)
            .HasForeignKey(h => h.JobId)
            .OnDelete(DeleteBehavior.Cascade);
+        job.HasOne<GoogleAccount>()
+           .WithMany()
+           .HasForeignKey(x => x.GoogleAccountId)
+           .OnDelete(DeleteBehavior.SetNull);
 
         var hist = b.Entity<JobStateHistory>();
         hist.ToTable("job_state_history");
@@ -41,5 +49,32 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         settings.ToTable("app_settings");
         settings.HasKey(x => x.Id);
         settings.Property(x => x.Id).ValueGeneratedNever();
+
+        var ws = b.Entity<SlackWorkspace>();
+        ws.ToTable("slack_workspaces");
+        ws.HasKey(x => x.Id);
+        ws.HasIndex(x => x.SlackTeamId).IsUnique();
+        ws.HasMany(x => x.Channels)
+          .WithOne(c => c.Workspace!)
+          .HasForeignKey(c => c.WorkspaceId)
+          .OnDelete(DeleteBehavior.Cascade);
+
+        var ch = b.Entity<SlackChannel>();
+        ch.ToTable("slack_channels");
+        ch.HasKey(x => x.Id);
+        ch.HasIndex(x => new { x.WorkspaceId, x.SlackChannelId }).IsUnique();
+        ch.HasIndex(x => x.SlackChannelId);
+
+        var ga = b.Entity<GoogleAccount>();
+        ga.ToTable("google_accounts");
+        ga.HasKey(x => x.Id);
+        ga.HasIndex(x => x.CreatedAt);
+
+        var cm = b.Entity<ChannelMapping>();
+        cm.ToTable("channel_mappings");
+        cm.HasKey(x => x.Id);
+        cm.HasIndex(x => x.SlackChannelId).IsUnique();
+        cm.HasOne(x => x.Workspace).WithMany().HasForeignKey(x => x.SlackWorkspaceId).OnDelete(DeleteBehavior.Cascade);
+        cm.HasOne(x => x.GoogleAccount).WithMany().HasForeignKey(x => x.GoogleAccountId).OnDelete(DeleteBehavior.Restrict);
     }
 }

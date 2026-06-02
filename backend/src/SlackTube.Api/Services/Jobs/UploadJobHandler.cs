@@ -26,6 +26,7 @@ public sealed class UploadJobHandler(
     IProgressTracker progress,
     ISlackStatusService status,
     SlackClient slack,
+    SlackWorkspaceService workspaces,
     IOptions<AppOptions> appOptions,
     ILogger<UploadJobHandler> logger)
 {
@@ -60,8 +61,10 @@ public sealed class UploadJobHandler(
         {
             if (await cancelFlags.IsRequestedAsync(job.Id)) { await MarkCancelledAsync(job, tempPath); return; }
 
-            var refreshToken = await oauth.GetRefreshTokenAsync(ct);
-            if (refreshToken is null) { await FailAsync(job, "Google account is not connected."); return; }
+            var accountId = job.GoogleAccountId ?? await oauth.GetDefaultAccountIdAsync(ct);
+            if (accountId is null) { await FailAsync(job, "No Google account is connected."); return; }
+            var refreshToken = await oauth.GetRefreshTokenAsync(accountId.Value, ct);
+            if (refreshToken is null) { await FailAsync(job, "Google account token is unavailable."); return; }
 
             Directory.CreateDirectory(tempDir);
 
@@ -115,7 +118,7 @@ public sealed class UploadJobHandler(
             if (await cancelFlags.IsRequestedAsync(job.Id)) { await MarkCancelledAsync(job, tempPath); return; }
 
             // ============================ QUOTA ============================
-            if (!await quota.TryReserveUploadAsync())
+            if (!await quota.TryReserveUploadAsync(accountId.Value))
             {
                 SafeDelete(tempPath);
                 progress.Remove(job.Id);
@@ -198,8 +201,12 @@ public sealed class UploadJobHandler(
         await status.RefreshQueueAsync(CancellationToken.None);
     }
 
-    private Task NotifyAsync(UploadJob job, string text)
-        => slack.PostMessageAsync(job.SlackChannelId, text, threadTs: job.SlackMessageTs, ct: CancellationToken.None);
+    private async Task NotifyAsync(UploadJob job, string text)
+    {
+        var token = await workspaces.GetBotTokenForChannelAsync(job.SlackChannelId);
+        if (token is null) return;
+        await slack.PostMessageAsync(token, job.SlackChannelId, text, threadTs: job.SlackMessageTs, ct: CancellationToken.None);
+    }
 
     private static void SafeDelete(string path)
     {

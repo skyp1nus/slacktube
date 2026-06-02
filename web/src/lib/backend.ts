@@ -26,11 +26,19 @@ export async function backendGet<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function backendPost(path: string, body: unknown): Promise<Response> {
+export async function backendPost(path: string, body?: unknown): Promise<Response> {
   return fetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "X-Admin-Token": TOKEN, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store",
+  });
+}
+
+export async function backendDelete(path: string): Promise<Response> {
+  return fetch(`${BASE}${path}`, {
+    method: "DELETE",
+    headers: { "X-Admin-Token": TOKEN },
     cache: "no-store",
   });
 }

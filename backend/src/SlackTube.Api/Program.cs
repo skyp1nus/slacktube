@@ -63,7 +63,9 @@ builder.Services.AddSingleton<ISlackStatusService, SlackStatusService>();
 // ---- scoped (touch the DbContext) ----------------------------------------------------
 builder.Services.AddScoped<ISettingsStore, SettingsStore>();
 builder.Services.AddScoped<IJobService, JobService>();
+builder.Services.AddScoped<ChannelMappingService>();
 builder.Services.AddScoped<GoogleOAuthService>();
+builder.Services.AddScoped<SlackWorkspaceService>();
 builder.Services.AddScoped<SlackIngestService>();
 builder.Services.AddScoped<UploadJobHandler>();
 

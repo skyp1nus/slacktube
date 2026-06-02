@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using SlackTube.Api.Data;
@@ -11,9 +12,11 @@ using SlackTube.Api.Data;
 namespace SlackTube.Api.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260602140238_AddGoogleAccounts")]
+    partial class AddGoogleAccounts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -45,41 +48,6 @@ namespace SlackTube.Api.Data.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("app_settings", (string)null);
-                });
-
-            modelBuilder.Entity("SlackTube.Api.Domain.ChannelMapping", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("GoogleAccountId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("SlackChannelId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("SlackChannelName")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("SlackWorkspaceId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("GoogleAccountId");
-
-                    b.HasIndex("SlackChannelId")
-                        .IsUnique();
-
-                    b.HasIndex("SlackWorkspaceId");
-
-                    b.ToTable("channel_mappings", (string)null);
                 });
 
             modelBuilder.Entity("SlackTube.Api.Domain.GoogleAccount", b =>
@@ -294,9 +262,6 @@ namespace SlackTube.Api.Data.Migrations
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("text");
 
-                    b.Property<Guid?>("GoogleAccountId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("HangfireJobId")
                         .HasColumnType("text");
 
@@ -350,32 +315,11 @@ namespace SlackTube.Api.Data.Migrations
 
                     b.HasIndex("CreatedAt");
 
-                    b.HasIndex("GoogleAccountId");
-
                     b.HasIndex("SlackEventId");
 
                     b.HasIndex("State");
 
                     b.ToTable("upload_jobs", (string)null);
-                });
-
-            modelBuilder.Entity("SlackTube.Api.Domain.ChannelMapping", b =>
-                {
-                    b.HasOne("SlackTube.Api.Domain.GoogleAccount", "GoogleAccount")
-                        .WithMany()
-                        .HasForeignKey("GoogleAccountId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("SlackTube.Api.Domain.SlackWorkspace", "Workspace")
-                        .WithMany()
-                        .HasForeignKey("SlackWorkspaceId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("GoogleAccount");
-
-                    b.Navigation("Workspace");
                 });
 
             modelBuilder.Entity("SlackTube.Api.Domain.JobStateHistory", b =>
@@ -398,14 +342,6 @@ namespace SlackTube.Api.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Workspace");
-                });
-
-            modelBuilder.Entity("SlackTube.Api.Domain.UploadJob", b =>
-                {
-                    b.HasOne("SlackTube.Api.Domain.GoogleAccount", null)
-                        .WithMany()
-                        .HasForeignKey("GoogleAccountId")
-                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("SlackTube.Api.Domain.SlackWorkspace", b =>

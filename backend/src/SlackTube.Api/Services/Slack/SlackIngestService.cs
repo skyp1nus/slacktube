@@ -15,11 +15,12 @@ public sealed record SlackMessageRef(string EventId, string ChannelId, string Us
 /// </summary>
 public sealed class SlackIngestService(
     SlackTemplateParser parser,
-    ISettingsStore settings,
     GoogleOAuthService oauth,
     DriveDownloadService drive,
     IJobService jobs,
+    ChannelMappingService mappings,
     SlackClient slack,
+    SlackWorkspaceService workspaces,
     ISlackStatusService status,
     IBackgroundJobClient backgroundJobs,
     ILogger<SlackIngestService> logger)
@@ -30,9 +31,9 @@ public sealed class SlackIngestService(
         // Idempotent across Hangfire retries / Slack redeliveries.
         if (await jobs.ExistsForEventAsync(msg.EventId, ct)) return;
 
-        // Only the configured listening channel.
-        var listening = await settings.GetListeningChannelAsync(ct);
-        if (string.IsNullOrEmpty(listening) || msg.ChannelId != listening) return;
+        // Only mapped channels — resolve the target Google account from the mapping.
+        var mapping = await mappings.GetByChannelAsync(msg.ChannelId, ct);
+        if (mapping is null) return;
 
         var parsed = parser.Parse(msg.Text);
         if (!parsed.IsUploadTemplate) return; // not an UPLOAD command — ignore silently
@@ -43,10 +44,10 @@ public sealed class SlackIngestService(
             return;
         }
 
-        var refreshToken = await oauth.GetRefreshTokenAsync(ct);
+        var refreshToken = await oauth.GetRefreshTokenAsync(mapping.GoogleAccountId, ct);
         if (refreshToken is null)
         {
-            await ReplyAsync(msg, ":warning: Google isn’t connected yet — ask an admin to connect it in the admin panel.", ct);
+            await ReplyAsync(msg, ":warning: The mapped Google account is unavailable — reconnect it in the admin panel.", ct);
             return;
         }
 
@@ -73,7 +74,7 @@ public sealed class SlackIngestService(
         var job = await jobs.CreateAsync(new NewJob(
             msg.EventId, msg.ChannelId, msg.UserId, msg.Ts,
             parsed.DriveFileId!, info.Name, Path.GetFileNameWithoutExtension(info.Name),
-            parsed.Description, parsed.Tags, requiresConfirm), ct);
+            parsed.Description, parsed.Tags, requiresConfirm, mapping.GoogleAccountId), ct);
 
         if (parsed.Warnings.Count > 0)
             await ReplyAsync(msg, ":warning: " + string.Join("\n", parsed.Warnings), ct);
@@ -87,7 +88,9 @@ public sealed class SlackIngestService(
                 _ => "tags",
             };
             var (text, blocks) = SlackBlocks.Confirm(job.Id, info.Name, missing);
-            await slack.PostMessageAsync(msg.ChannelId, text, blocks, threadTs: msg.Ts, ct: ct);
+            var confirmToken = await workspaces.GetBotTokenForChannelAsync(msg.ChannelId, ct);
+            if (confirmToken is not null)
+                await slack.PostMessageAsync(confirmToken, msg.ChannelId, text, blocks, threadTs: msg.Ts, ct: ct);
             return;
         }
 
@@ -99,6 +102,10 @@ public sealed class SlackIngestService(
     public void Enqueue(Guid jobId)
         => backgroundJobs.Enqueue<UploadJobHandler>(h => h.RunAsync(jobId, CancellationToken.None));
 
-    private Task ReplyAsync(SlackMessageRef msg, string text, CancellationToken ct)
-        => slack.PostMessageAsync(msg.ChannelId, text, threadTs: msg.Ts, ct: ct);
+    private async Task ReplyAsync(SlackMessageRef msg, string text, CancellationToken ct)
+    {
+        var token = await workspaces.GetBotTokenForChannelAsync(msg.ChannelId, ct);
+        if (token is null) return;
+        await slack.PostMessageAsync(token, msg.ChannelId, text, threadTs: msg.Ts, ct: ct);
+    }
 }

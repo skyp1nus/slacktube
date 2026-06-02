@@ -46,9 +46,12 @@ services:
       Google__ClientSecret: "${GOOGLE_CLIENT_SECRET:-}"
       Google__RedirectUri: "http://localhost:5080/google/oauth/callback"
       App__PublicBaseUrl: "http://localhost:5080"
+      App__AdminPanelUrl: "http://localhost:3000"
       App__TempDownloadDir: "/tmp/slacktube-uploads"
       Slack__SigningSecret: "${SLACK_SIGNING_SECRET:-}"
-      Slack__BotToken: "${SLACK_BOT_TOKEN:-}"
+      Slack__ClientId: "${SLACK_CLIENT_ID:-}"
+      Slack__ClientSecret: "${SLACK_CLIENT_SECRET:-}"
+      Slack__RedirectUri: "http://localhost:5080/slack/oauth/callback"
     ports:
       - "5080:8080"
 

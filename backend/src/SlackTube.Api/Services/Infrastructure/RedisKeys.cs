@@ -9,7 +9,8 @@ public static class RedisKeys
     /// <summary>Per-job cancellation flag (checked atomically before each worker step).</summary>
     public static string Cancel(Guid jobId) => $"slacktube:cancel:job:{jobId}";
 
-    /// <summary>YouTube units used on a given Pacific-Time date. Key name embeds the PT date,
-    /// so the counter naturally resets to 0 at PT midnight (a new key is used).</summary>
-    public static string Quota(string ptDate) => $"slacktube:quota:youtube:{ptDate}";
+    /// <summary>YouTube units used by a Google account on a given Pacific-Time date. The key embeds
+    /// the account id + PT date, so each account has its own counter that resets at PT midnight.</summary>
+    public static string Quota(Guid googleAccountId, string ptDate)
+        => $"slacktube:quota:youtube:{googleAccountId}:{ptDate}";
 }
