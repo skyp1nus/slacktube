@@ -31,7 +31,7 @@ export function LoginForm() {
     });
     setLoading(false);
     if (res.ok) {
-      router.push("/dashboard");
+      router.push("/");
       router.refresh();
     } else {
       setError("Invalid credentials");

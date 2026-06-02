@@ -12,5 +12,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  // Protect everything except the login page, API routes, and static assets.
+  matcher: ["/((?!login|api|_next|favicon.ico).*)"],
 };

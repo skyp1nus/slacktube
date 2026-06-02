@@ -1,5 +1,4 @@
 import { requireSession, backendGet, backendBaseUrl } from "@/lib/backend";
-import { SiteNav } from "@/components/site-nav";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AccountCard } from "./account-card";
@@ -24,12 +23,11 @@ export default async function AccountsPage() {
 
   return (
     <>
-      <SiteNav />
       <OAuthToast />
-      <div className="mx-auto w-full max-w-4xl space-y-6 p-6">
+      <div className="mx-auto w-full max-w-5xl space-y-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Google accounts</h1>
+            <h2 className="text-2xl font-semibold tracking-tight">Google accounts</h2>
             <p className="text-sm text-muted-foreground">
               Connect one or more YouTube channels. Each consent adds a new account.
             </p>

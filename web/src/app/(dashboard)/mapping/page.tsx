@@ -1,5 +1,4 @@
 import { requireSession, backendGet } from "@/lib/backend";
-import { SiteNav } from "@/components/site-nav";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
@@ -42,10 +41,9 @@ export default async function MappingPage() {
 
   return (
     <>
-      <SiteNav />
-      <div className="mx-auto w-full max-w-4xl space-y-6 p-6">
+      <div className="mx-auto w-full max-w-5xl space-y-6">
         <header>
-          <h1 className="text-2xl font-semibold">Mapping</h1>
+          <h2 className="text-2xl font-semibold tracking-tight">Mapping</h2>
           <p className="text-sm text-muted-foreground">
             Route a Slack channel to a Google account. Uploads posted in a channel go to its account.
           </p>
