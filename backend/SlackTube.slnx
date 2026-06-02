@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SlackTube.Api/SlackTube.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SlackTube.Tests/SlackTube.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,72 @@
+name: slacktube
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: slacktube
+      POSTGRES_PASSWORD: slacktube
+      POSTGRES_DB: slacktube
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slacktube"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build:
+      context: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Postgres: "Host=db;Port=5432;Database=slacktube;Username=slacktube;Password=slacktube"
+      ConnectionStrings__Redis: "redis:6379"
+      TokenEncryption__Key: "${TOKEN_ENCRYPTION_KEY:-dev-encryption-key-0123456789}"
+      Admin__Username: "${ADMIN_USER:-admin}"
+      Admin__Password: "${ADMIN_PASSWORD:-admin}"
+      Admin__ApiKey: "${BACKEND_ADMIN_TOKEN:-devadmintoken}"
+      Google__ClientId: "${GOOGLE_CLIENT_ID:-}"
+      Google__ClientSecret: "${GOOGLE_CLIENT_SECRET:-}"
+      Google__RedirectUri: "http://localhost:5080/google/oauth/callback"
+      App__PublicBaseUrl: "http://localhost:5080"
+      App__TempDownloadDir: "/tmp/slacktube-uploads"
+      Slack__SigningSecret: "${SLACK_SIGNING_SECRET:-}"
+      Slack__BotToken: "${SLACK_BOT_TOKEN:-}"
+    ports:
+      - "5080:8080"
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_BACKEND_URL: "http://localhost:5080"
+    depends_on:
+      - api
+    environment:
+      BACKEND_URL: "http://api:8080"
+      ADMIN_USER: "${ADMIN_USER:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin}"
+      SESSION_SECRET: "${SESSION_SECRET:-dev-session-secret}"
+      BACKEND_ADMIN_TOKEN: "${BACKEND_ADMIN_TOKEN:-devadmintoken}"
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

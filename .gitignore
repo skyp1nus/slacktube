@@ -1,0 +1,37 @@
+# ---- .NET ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.nupkg
+
+# ---- Node / Next.js / Bun ----
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+bun.lockb.bak
+
+# ---- Env / secrets ----
+.env
+.env.local
+.env.*.local
+*.pem
+dataprotection-keys/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---- Temp upload working dir ----
+tmp/
+uploads-tmp/
