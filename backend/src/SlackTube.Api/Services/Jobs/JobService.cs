@@ -31,6 +31,8 @@ public interface IJobService
     Task SaveAsync(UploadJob job, CancellationToken ct = default);
     Task<StatusSnapshot> GetStatusSnapshotAsync(string slackChannelId, int recentCount = 5, CancellationToken ct = default);
     Task<IReadOnlyList<UploadJob>> GetHistoryAsync(int take = 50, CancellationToken ct = default);
+    Task<(IReadOnlyList<UploadJob> Items, int Total)> GetHistoryPagedAsync(JobState? state, int page, int pageSize, CancellationToken ct = default);
+    Task<(int UploadsToday, int UploadsLast24h, int ErrorsLast24h)> GetDashboardCountsAsync(CancellationToken ct = default);
 }
 
 public sealed class JobService(AppDbContext db) : IJobService
@@ -125,4 +127,30 @@ public sealed class JobService(AppDbContext db) : IJobService
             .OrderByDescending(j => j.CreatedAt)
             .Take(take)
             .ToListAsync(ct);
+
+    public async Task<(IReadOnlyList<UploadJob> Items, int Total)> GetHistoryPagedAsync(
+        JobState? state, int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = db.Jobs.AsNoTracking().AsQueryable();
+        if (state is not null) query = query.Where(j => j.State == state.Value);
+        var total = await query.CountAsync(ct);
+        var items = await query
+            .OrderByDescending(j => j.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+        return (items, total);
+    }
+
+    public async Task<(int UploadsToday, int UploadsLast24h, int ErrorsLast24h)> GetDashboardCountsAsync(
+        CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var dayAgo = now.AddHours(-24);
+        var todayStart = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        var uploadsToday = await db.Jobs.CountAsync(j => j.State == JobState.Done && j.UpdatedAt >= todayStart, ct);
+        var uploadsLast24h = await db.Jobs.CountAsync(j => j.State == JobState.Done && j.UpdatedAt >= dayAgo, ct);
+        var errorsLast24h = await db.Jobs.CountAsync(j => j.State == JobState.Failed && j.UpdatedAt >= dayAgo, ct);
+        return (uploadsToday, uploadsLast24h, errorsLast24h);
+    }
 }

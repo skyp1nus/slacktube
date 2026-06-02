@@ -67,7 +67,7 @@ export default async function SettingsPage() {
             <span className="w-32 text-muted-foreground">Quota today (PT)</span>
             {status ? (
               <Badge variant="outline">
-                {status.quota.remainingUploads}/{status.quota.totalUploads} uploads left
+                {status.quota.usedUnits.toLocaleString()} / {status.quota.capUnits.toLocaleString()} units used
               </Badge>
             ) : (
               "—"

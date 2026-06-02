@@ -288,6 +288,14 @@ cd web && bun run build                      # type-check + production build
   sets an HMAC-signed httpOnly session cookie; the backend admin API is guarded by a shared
   `X-Admin-Token`; the Hangfire dashboard is local-request-only. None of these are production
   hardened.
+- **Admin dashboard stats** come from a dedicated `GET /api/admin/dashboard` endpoint
+  (workspace/account counts, uploads today + last-24h, errors-24h, aggregate quota units).
+  Tradeoff: "uploads today" uses the **UTC** day boundary (not PT, unlike the quota counter),
+  and the dashboard quota gauge is an **aggregate** (sum of per-account used units; cap =
+  per-account cap × account count) — per-account bars live on the Accounts tab. Admin quota is
+  shown in **units**; the Slack live status message stays human-friendly ("≈N uploads").
+- `GET /api/admin/jobs` takes `status` / `page` / `pageSize` and returns `{ items, total }`
+  (server-side filter + pagination); the Jobs tab drives it via URL search params.
 - EF migrations are applied automatically on backend startup.
 
 ## Out of scope

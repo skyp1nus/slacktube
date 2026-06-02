@@ -41,7 +41,7 @@ export function LoginForm() {
   return (
     <Card className="w-full max-w-sm">
       <CardHeader>
-        <CardTitle>SlackTube admin</CardTitle>
+        <CardTitle>SlackTube</CardTitle>
         <CardDescription>Sign in to manage uploads</CardDescription>
       </CardHeader>
       <CardContent>

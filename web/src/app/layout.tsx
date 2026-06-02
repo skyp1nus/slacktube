@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SlackTube admin",
+  title: "SlackTube",
   description: "Slack → YouTube upload automation — admin panel",
 };
 

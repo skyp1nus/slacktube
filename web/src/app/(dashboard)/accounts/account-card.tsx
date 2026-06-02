@@ -1,62 +1,73 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { CalendarDays, MonitorPlay } from "lucide-react";
+
+import type { GoogleAccountDto } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
+import { DisconnectAccountDialog } from "./disconnect-account-dialog";
 
-type Account = {
-  id: string;
-  label: string;
-  youTubeChannelId: string | null;
-  youTubeChannelTitle: string | null;
-  accountEmail: string | null;
-  status: string;
-  createdAt: string;
-  quota: { usedUnits: number; remainingUploads: number; totalUploads: number };
-};
+const nf = new Intl.NumberFormat("en-US");
+const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
-export function AccountCard({ account }: { account: Account }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
+function usagePercent(used: number, limit: number): number {
+  if (limit <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
+}
 
-  async function disconnect() {
-    if (!window.confirm(`Disconnect "${account.label}"? Mappings pointing to it will be removed.`)) return;
-    setBusy(true);
-    const res = await fetch(`/api/admin/accounts/${account.id}`, { method: "DELETE" });
-    setBusy(false);
-    if (res.ok) {
-      toast.success("Account disconnected");
-      router.refresh();
-    } else if (res.status === 409) {
-      toast.error("A mapping still points to this account — remove it first.");
-    } else {
-      toast.error("Failed to disconnect");
-    }
-  }
+export function AccountCard({ account }: { account: GoogleAccountDto }) {
+  const { usedUnits, capUnits } = account.quota;
+  const percent = usagePercent(usedUnits, capUnits);
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
-        <div>
-          <CardTitle className="flex items-center gap-2 text-base">
-            {account.youTubeChannelTitle ?? account.label}
-            <Badge variant={account.status === "Active" ? "default" : "destructive"}>{account.status}</Badge>
-          </CardTitle>
-          <CardDescription>
-            {account.youTubeChannelId ? `channel ${account.youTubeChannelId}` : "channel id unknown"}
-            {" · "}
-            {account.quota.remainingUploads}/{account.quota.totalUploads} uploads left today
-          </CardDescription>
+      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <MonitorPlay className="size-4.5 text-primary" aria-hidden="true" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-base">{account.youTubeChannelTitle ?? account.label}</CardTitle>
+              <Badge
+                variant="outline"
+                className={cn(
+                  account.status === "Active" &&
+                    "border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400",
+                )}
+              >
+                {account.status}
+              </Badge>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span className="font-mono">{account.youTubeChannelId ?? "channel id unknown"}</span>
+              <span className="inline-flex items-center gap-1.5">
+                <CalendarDays className="size-3.5" aria-hidden="true" />
+                Connected {dateFormatter.format(new Date(account.createdAt))}
+              </span>
+            </div>
+          </div>
         </div>
-        <Button variant="outline" size="sm" disabled={busy} onClick={disconnect}>
-          Disconnect
-        </Button>
+        <DisconnectAccountDialog id={account.id} label={account.youTubeChannelTitle ?? account.label} />
       </CardHeader>
-      <CardContent className="text-xs text-muted-foreground">
-        Connected {new Date(account.createdAt).toLocaleString()}
+
+      <Separator />
+
+      <CardContent className="space-y-1.5 py-3">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Quota today (PT)</span>
+          <span className={cn("font-medium tabular-nums", percent >= 90 && "text-destructive")}>{percent}%</span>
+        </div>
+        <Progress
+          value={percent}
+          className={cn(percent >= 90 && "[&>[data-slot=progress-indicator]]:bg-destructive")}
+        />
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {nf.format(usedUnits)} / {nf.format(capUnits)} units
+        </span>
       </CardContent>
     </Card>
   );

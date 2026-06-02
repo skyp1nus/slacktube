@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
+using SlackTube.Api.Domain;
 using SlackTube.Api.Services.Google;
 using SlackTube.Api.Services.Jobs;
 using SlackTube.Api.Services.Settings;
@@ -70,7 +71,7 @@ public static class AdminApiEndpoints
                 result.Add(new
                 {
                     a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AccountEmail, a.Status, a.CreatedAt,
-                    quota = new { q.UsedUnits, q.RemainingUploads, q.TotalUploads },
+                    quota = new { q.UsedUnits, q.CapUnits, q.RemainingUploads, q.TotalUploads },
                 });
             }
             return Results.Ok(result);
@@ -102,21 +103,54 @@ public static class AdminApiEndpoints
         admin.MapDelete("/mappings/{id:guid}", async (Guid id, ChannelMappingService mappings, CancellationToken ct) =>
             await mappings.DeleteAsync(id, ct) ? Results.NoContent() : Results.NotFound());
 
-        // ---- Job history ----------------------------------------------------------------
-        admin.MapGet("/jobs", async (IJobService jobs, CancellationToken ct) =>
+        // ---- Dashboard KPIs --------------------------------------------------------------
+        admin.MapGet("/dashboard", async (
+            SlackWorkspaceService ws, GoogleOAuthService google, IJobService jobs, IQuotaService quota,
+            IOptions<AppOptions> appOpt, CancellationToken ct) =>
         {
-            var history = await jobs.GetHistoryAsync(50, ct);
-            return Results.Ok(history.Select(j => new
+            var workspaceCount = await ws.CountActiveWorkspacesAsync(ct);
+            var accounts = await google.ListAccountsAsync(ct);
+            var capPer = appOpt.Value.YouTubeDailyQuotaUnits;
+            var usedSum = 0;
+            foreach (var a in accounts)
+                usedSum += (await quota.GetStatusAsync(a.Id)).UsedUnits;
+            var (uploadsToday, uploadsLast24h, errorsLast24h) = await jobs.GetDashboardCountsAsync(ct);
+            return Results.Ok(new
             {
-                j.Id,
-                fileName = j.OriginalFileName ?? j.Title,
-                state = j.State.ToString(),
-                j.YouTubeUrl,
-                error = j.ErrorMessage,
-                tags = j.Tags,
-                j.CreatedAt,
-                j.UpdatedAt,
-            }));
+                workspaceCount,
+                accountCount = accounts.Count,
+                uploadsToday,
+                uploadsLast24h,
+                errorsLast24h,
+                quotaUsedUnits = usedSum,
+                quotaCapUnits = capPer * accounts.Count,
+            });
+        });
+
+        // ---- Job history (filtered + paginated) -----------------------------------------
+        admin.MapGet("/jobs", async (
+            IJobService jobs, string? status, int? page, int? pageSize, CancellationToken ct) =>
+        {
+            JobState? state = Enum.TryParse<JobState>(status, ignoreCase: true, out var s) ? s : null;
+            var pageNum = Math.Max(1, page ?? 1);
+            var size = Math.Clamp(pageSize ?? 20, 1, 100);
+            var (items, total) = await jobs.GetHistoryPagedAsync(state, pageNum, size, ct);
+            return Results.Ok(new
+            {
+                total,
+                items = items.Select(j => new
+                {
+                    j.Id,
+                    fileName = j.OriginalFileName ?? j.Title,
+                    state = j.State.ToString(),
+                    j.YouTubeUrl,
+                    error = j.ErrorMessage,
+                    tags = j.Tags,
+                    j.GoogleAccountId,
+                    j.CreatedAt,
+                    j.UpdatedAt,
+                }),
+            });
         });
     }
 }
