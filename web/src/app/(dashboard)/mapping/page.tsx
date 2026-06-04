@@ -1,11 +1,12 @@
 "use client";
 
-import { AlertTriangle, Link2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, Link2, MonitorPlay } from "lucide-react";
 
 import type { ChannelMappingDto } from "@/lib/types";
 import { useMappings } from "@/hooks/use-mappings";
 import { AddMappingDialog } from "./add-mapping-dialog";
 import { DeleteMappingDialog } from "./delete-mapping-dialog";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -57,18 +58,42 @@ function MappingsTable({ mappings }: { mappings: ChannelMappingDto[] }) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="px-4">Slack channel</TableHead>
-          <TableHead>Workspace</TableHead>
-          <TableHead>Google account</TableHead>
+          <TableHead className="px-4">Google account</TableHead>
+          <TableHead className="w-10" aria-label="routes to" />
+          <TableHead>Slack chat</TableHead>
           <TableHead className="px-4 text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {mappings.map((mapping) => (
           <TableRow key={mapping.id}>
-            <TableCell className="px-4 font-medium">#{mapping.slackChannelName}</TableCell>
-            <TableCell className="text-muted-foreground">{mapping.slackWorkspaceName}</TableCell>
-            <TableCell>{mapping.googleAccountLabel}</TableCell>
+            <TableCell className="px-4">
+              <div className="flex items-center gap-3">
+                <Avatar className="size-8 shrink-0">
+                  {mapping.googleAccountAvatarUrl ? (
+                    <AvatarImage src={mapping.googleAccountAvatarUrl} alt="" />
+                  ) : null}
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    <MonitorPlay className="size-4" aria-hidden="true" />
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{mapping.googleAccountLabel}</div>
+                  {mapping.googleAccountChannelId ? (
+                    <div className="truncate font-mono text-xs text-muted-foreground">
+                      {mapping.googleAccountChannelId}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </TableCell>
+            <TableCell className="text-muted-foreground">
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </TableCell>
+            <TableCell>
+              <div className="font-medium">#{mapping.slackChannelName}</div>
+              <div className="text-xs text-muted-foreground">{mapping.slackWorkspaceName} · workspace</div>
+            </TableCell>
             <TableCell className="px-4 text-right">
               <DeleteMappingDialog
                 id={mapping.id}

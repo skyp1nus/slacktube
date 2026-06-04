@@ -7,7 +7,9 @@ namespace SlackTube.Api.Services.Jobs;
 public sealed record ChannelMappingDto(
     Guid Id, Guid SlackWorkspaceId, string SlackWorkspaceName,
     string SlackChannelId, string SlackChannelName,
-    Guid GoogleAccountId, string GoogleAccountLabel, DateTimeOffset CreatedAt);
+    Guid GoogleAccountId, string GoogleAccountLabel,
+    string? GoogleAccountAvatarUrl, string? GoogleAccountChannelId,
+    DateTimeOffset CreatedAt);
 
 /// <summary>Lightweight routing record used by the ingest/status paths.</summary>
 public sealed record MappingRoute(
@@ -21,7 +23,9 @@ public sealed class ChannelMappingService(AppDbContext db)
             .Select(m => new ChannelMappingDto(
                 m.Id, m.SlackWorkspaceId, m.Workspace!.TeamName,
                 m.SlackChannelId, m.SlackChannelName,
-                m.GoogleAccountId, m.GoogleAccount!.Label, m.CreatedAt))
+                m.GoogleAccountId, m.GoogleAccount!.Label,
+                m.GoogleAccount!.AvatarUrl, m.GoogleAccount!.YouTubeChannelId,
+                m.CreatedAt))
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<MappingRoute>> ListRoutesAsync(CancellationToken ct = default) =>
