@@ -11,7 +11,7 @@ public sealed record GoogleConnection(bool Connected, string? Scopes, DateTimeOf
 
 public sealed record GoogleAccountDto(
     Guid Id, string Label, string? YouTubeChannelId, string? YouTubeChannelTitle,
-    string? AccountEmail, string Status, DateTimeOffset CreatedAt);
+    string? AvatarUrl, string? AccountEmail, string Status, DateTimeOffset CreatedAt);
 
 /// <summary>
 /// Manages connected Google/YouTube accounts. Each consent INSERTS a new account (multi-account),
@@ -41,8 +41,8 @@ public sealed class GoogleOAuthService(
             throw new InvalidOperationException(
                 "Google returned no refresh token. Revoke prior access or re-consent (prompt=consent).");
 
-        string? channelId = null, channelTitle = null;
-        try { (channelId, channelTitle) = await youtube.GetChannelInfoAsync(token.RefreshToken, ct); }
+        string? channelId = null, channelTitle = null, avatarUrl = null;
+        try { (channelId, channelTitle, avatarUrl) = await youtube.GetChannelInfoAsync(token.RefreshToken, ct); }
         catch { /* channel lookup is best-effort; the account still works for upload */ }
 
         var now = DateTimeOffset.UtcNow;
@@ -51,6 +51,7 @@ public sealed class GoogleOAuthService(
             Label = channelTitle ?? "YouTube account",
             YouTubeChannelId = channelId,
             YouTubeChannelTitle = channelTitle,
+            AvatarUrl = avatarUrl,
             EncryptedRefreshToken = protector.Protect(token.RefreshToken),
             Scopes = string.Join(' ', GoogleCredentialFactory.Scopes),
             Status = "Active",
@@ -66,7 +67,7 @@ public sealed class GoogleOAuthService(
         await db.GoogleAccounts.AsNoTracking()
             .OrderBy(a => a.CreatedAt)
             .Select(a => new GoogleAccountDto(
-                a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AccountEmail, a.Status, a.CreatedAt))
+                a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AvatarUrl, a.AccountEmail, a.Status, a.CreatedAt))
             .ToListAsync(ct);
 
     public Task<GoogleAccount?> GetAccountAsync(Guid id, CancellationToken ct = default) =>

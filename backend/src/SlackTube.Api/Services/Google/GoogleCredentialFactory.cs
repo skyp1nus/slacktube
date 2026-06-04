@@ -17,7 +17,8 @@ public sealed class GoogleCredentialFactory(IOptions<GoogleOptions> options)
 {
     public static readonly string[] Scopes =
     {
-        YouTubeService.Scope.YoutubeUpload,          // youtube.upload
+        YouTubeService.Scope.YoutubeUpload,          // youtube.upload  — videos.insert
+        YouTubeService.Scope.YoutubeReadonly,        // youtube.readonly — channels.list (resolve channel id/title)
         DriveService.ScopeConstants.DriveReadonly,   // drive.readonly
     };
 

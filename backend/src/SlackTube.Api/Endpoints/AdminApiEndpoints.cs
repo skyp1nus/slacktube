@@ -70,7 +70,7 @@ public static class AdminApiEndpoints
                 var q = await quota.GetStatusAsync(a.Id);
                 result.Add(new
                 {
-                    a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AccountEmail, a.Status, a.CreatedAt,
+                    a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AvatarUrl, a.AccountEmail, a.Status, a.CreatedAt,
                     quota = new { q.UsedUnits, q.CapUnits, q.RemainingUploads, q.TotalUploads },
                 });
             }

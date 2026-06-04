@@ -19,14 +19,16 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             ApplicationName = "SlackTube",
         });
 
-    /// <summary>The authenticated account's own channel id + title (channels.list?mine=true, ~1 unit).</summary>
-    public async Task<(string? Id, string? Title)> GetChannelInfoAsync(string refreshToken, CancellationToken ct = default)
+    /// <summary>The authenticated account's own channel id + title + avatar (channels.list?mine=true, ~1 unit).</summary>
+    public async Task<(string? Id, string? Title, string? AvatarUrl)> GetChannelInfoAsync(string refreshToken, CancellationToken ct = default)
     {
         var request = BuildService(refreshToken).Channels.List("snippet");
         request.Mine = true;
         var response = await request.ExecuteAsync(ct);
         var item = response.Items?.FirstOrDefault();
-        return (item?.Id, item?.Snippet?.Title);
+        var thumbs = item?.Snippet?.Thumbnails;
+        var avatar = thumbs?.High?.Url ?? thumbs?.Medium?.Url ?? thumbs?.Default__?.Url;
+        return (item?.Id, item?.Snippet?.Title, avatar);
     }
 
     /// <summary>

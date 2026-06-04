@@ -13,6 +13,8 @@ public class GoogleAccount
 
     public string? YouTubeChannelId { get; set; }
     public string? YouTubeChannelTitle { get; set; }
+    /// <summary>Channel avatar (snippet.thumbnails) URL, captured at consent for display.</summary>
+    public string? AvatarUrl { get; set; }
     public string? AccountEmail { get; set; }
 
     public string EncryptedRefreshToken { get; set; } = default!;

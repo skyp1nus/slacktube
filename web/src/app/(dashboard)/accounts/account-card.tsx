@@ -4,6 +4,7 @@ import { CalendarDays, MonitorPlay } from "lucide-react";
 
 import type { GoogleAccountDto } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -26,9 +27,12 @@ export function AccountCard({ account }: { account: GoogleAccountDto }) {
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
         <div className="flex items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <MonitorPlay className="size-4.5 text-primary" aria-hidden="true" />
-          </div>
+          <Avatar className="size-9 shrink-0">
+            {account.avatarUrl ? <AvatarImage src={account.avatarUrl} alt="" /> : null}
+            <AvatarFallback className="bg-primary/10 text-primary">
+              <MonitorPlay className="size-4.5" aria-hidden="true" />
+            </AvatarFallback>
+          </Avatar>
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <CardTitle className="text-base">{account.youTubeChannelTitle ?? account.label}</CardTitle>

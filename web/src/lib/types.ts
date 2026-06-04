@@ -41,6 +41,7 @@ export type GoogleAccountDto = {
   label: string;
   youTubeChannelId: string | null;
   youTubeChannelTitle: string | null;
+  avatarUrl: string | null;
   accountEmail: string | null;
   status: string;
   createdAt: string;
@@ -56,6 +57,8 @@ export type ChannelMappingDto = {
   slackChannelName: string;
   googleAccountId: string;
   googleAccountLabel: string;
+  googleAccountAvatarUrl: string | null;
+  googleAccountChannelId: string | null;
   createdAt: string;
 };
 
