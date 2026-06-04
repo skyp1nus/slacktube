@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, CalendarDays, Hash, Loader2, Lock, MessageSquare, Plug, RefreshCw, Unplug } from "lucide-react";
+import { Bot, CalendarDays, Hash, Loader2, Lock, Plug, RefreshCw, Unplug } from "lucide-react";
 import { toast } from "sonner";
 
 import type { SlackWorkspaceDto } from "@/lib/types";
@@ -95,16 +95,44 @@ export default function SlackPage() {
   );
 }
 
+// Slack doesn't expose the workspace icon without the team:read scope, so we render a generated
+// initial-avatar (first letter + a stable color picked from the team name) — like Slack/Google do.
+const AVATAR_COLORS = [
+  "bg-rose-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-emerald-500",
+  "bg-teal-500",
+  "bg-sky-500",
+  "bg-indigo-500",
+  "bg-violet-500",
+  "bg-fuchsia-500",
+];
+
+function workspaceAvatar(name: string): { initial: string; color: string } {
+  const trimmed = name.trim();
+  let hash = 0;
+  for (let i = 0; i < trimmed.length; i++) hash = (hash * 31 + trimmed.charCodeAt(i)) >>> 0;
+  return {
+    initial: trimmed.length > 0 ? trimmed.charAt(0).toUpperCase() : "?",
+    color: AVATAR_COLORS[hash % AVATAR_COLORS.length] ?? "bg-slate-500",
+  };
+}
+
 function WorkspaceCard({ workspace }: { workspace: SlackWorkspaceDto }) {
   const [expanded, setExpanded] = useState(false);
   const refresh = useRefreshChannels();
+  const avatar = workspaceAvatar(workspace.teamName);
 
   return (
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
         <div className="flex items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <MessageSquare className="size-4.5 text-primary" aria-hidden="true" />
+          <div
+            className={`flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white ${avatar.color}`}
+            aria-hidden="true"
+          >
+            {avatar.initial}
           </div>
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
