@@ -71,6 +71,7 @@ public sealed class UploadJobHandler(
             if (refreshToken is null) { await FailAsync(job, "Google account token is unavailable."); return; }
 
             Directory.CreateDirectory(tempDir);
+            var chunkBytes = appOptions.Value.TransferChunkSizeBytes;
 
             // ============================ DOWNLOAD ============================
             await jobs.TransitionAsync(job, JobState.Downloading, "download started", ct);
@@ -108,7 +109,7 @@ public sealed class UploadJobHandler(
                                 downloadCts.Cancel();
                             }
                         }
-                    }, downloadCts.Token);
+                    }, chunkBytes, downloadCts.Token);
                 }
                 catch (OperationCanceledException) when (cancelledDuringDownload)
                 {
@@ -155,6 +156,7 @@ public sealed class UploadJobHandler(
                         progress.Set(job.Id, new JobProgress(JobState.Processing, job.BytesTotal, job.BytesTotal, PhaseProcessing));
                         _ = status.UpdateProgressAsync(job.Id);
                     },
+                    chunkBytes,
                     ct);
             }
 

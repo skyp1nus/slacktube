@@ -48,6 +48,7 @@ services:
       App__PublicBaseUrl: "${PUBLIC_BASE_URL:-http://localhost:5080}"
       App__AdminPanelUrl: "http://localhost:3000"
       App__TempDownloadDir: "/tmp/slacktube-uploads"
+      App__TransferChunkSizeMb: "${TRANSFER_CHUNK_MB:-64}"
       Slack__SigningSecret: "${SLACK_SIGNING_SECRET:-}"
       Slack__ClientId: "${SLACK_CLIENT_ID:-}"
       Slack__ClientSecret: "${SLACK_CLIENT_SECRET:-}"

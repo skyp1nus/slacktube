@@ -45,6 +45,7 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
         IList<string> tags,
         Action<long> onBytes,
         Action onProcessing,
+        int chunkSize,
         CancellationToken ct)
     {
         var video = new Video
@@ -61,6 +62,7 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
 
         var request = service.Videos.Insert(video, "snippet,status", videoStream, "video/*");
         request.NotifySubscribers = false;
+        request.ChunkSize = chunkSize; // fewer resumable-upload requests on large files
 
         string? videoId = null;
         var processingFired = false;

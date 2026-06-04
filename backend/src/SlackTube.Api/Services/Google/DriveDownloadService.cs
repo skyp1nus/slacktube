@@ -31,10 +31,11 @@ public sealed class DriveDownloadService(GoogleCredentialFactory factory)
     /// <summary>Streams binary content to <paramref name="destination"/>, reporting bytes downloaded.
     /// Honors cancellation (used to abort + clean up on user cancel during the download phase).</summary>
     public async Task DownloadAsync(
-        DriveService service, string fileId, Stream destination, Action<long> onBytes, CancellationToken ct)
+        DriveService service, string fileId, Stream destination, Action<long> onBytes, int chunkSize, CancellationToken ct)
     {
         var req = service.Files.Get(fileId);
         req.SupportsAllDrives = true;
+        req.MediaDownloader.ChunkSize = chunkSize; // fewer range requests on large files
         req.MediaDownloader.ProgressChanged += p =>
         {
             if (p.Status is DownloadStatus.Downloading or DownloadStatus.Completed)

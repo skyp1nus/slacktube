@@ -56,6 +56,14 @@ public sealed class AppOptions
     /// <summary>Cost of one videos.insert (~1600 units).</summary>
     public int YouTubeUploadCostUnits { get; set; } = 1600;
 
+    /// <summary>Drive download + YouTube upload chunk size in MB. Bigger = fewer HTTP round-trips
+    /// (faster on large files / high-latency links) at the cost of more RAM and bigger re-sends on a
+    /// transient error. Every whole MB is a valid multiple of YouTube's 256 KB chunk requirement.</summary>
+    public int TransferChunkSizeMb { get; set; } = 64;
+
     /// <summary>Whole uploads that still fit under today's cap.</summary>
     public int DailyUploadCapacity => YouTubeDailyQuotaUnits / YouTubeUploadCostUnits;
+
+    /// <summary>Transfer chunk size in bytes (clamped to ≥1 MB).</summary>
+    public int TransferChunkSizeBytes => (TransferChunkSizeMb < 1 ? 1 : TransferChunkSizeMb) * 1024 * 1024;
 }
