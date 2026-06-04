@@ -59,7 +59,7 @@ public sealed class SlackClient(
         return root is not null && root.Value.GetProperty("ok").GetBoolean();
     }
 
-    /// <summary>Lists a workspace's public + private channels (cursor-paginated).</summary>
+    /// <summary>Lists a workspace's public channels the bot can see (cursor-paginated).</summary>
     public async Task<IReadOnlyList<SlackChannelInfo>> ListChannelsAsync(string botToken, CancellationToken ct = default)
     {
         var result = new List<SlackChannelInfo>();
@@ -68,7 +68,7 @@ public sealed class SlackClient(
         {
             var payload = new Dictionary<string, object?>
             {
-                ["types"] = "public_channel,private_channel",
+                ["types"] = "public_channel",
                 ["exclude_archived"] = true,
                 ["limit"] = 200,
             };

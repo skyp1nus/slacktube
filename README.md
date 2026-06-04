@@ -174,10 +174,11 @@ history.
 1. Create a Slack app. From **Basic Information** copy **Client ID**, **Client Secret**, and
    **Signing Secret** → `Slack__ClientId` / `Slack__ClientSecret` / `Slack__SigningSecret`.
 2. **OAuth & Permissions** → Redirect URLs: add `https://<public-backend>/slack/oauth/callback`
-   (matches `Slack__RedirectUri`). Bot token scopes:
-   `chat:write,channels:read,groups:read,channels:history,groups:history,team:read`.
+   (matches `Slack__RedirectUri`). Bot token scopes (public channels):
+   `chat:write,channels:read,channels:history`.
+   (Add `groups:read,groups:history` — here, in `InstallScopes`, and in `SlackClient.ListChannelsAsync` — for private channels.)
 3. **Event Subscriptions** → Request URL `https://<public-backend>/slack/events` → subscribe to
-   bot events `message.channels` (+ `message.groups` for private channels).
+   bot events `message.channels` (+ `message.groups` if private channels are enabled).
 4. **Interactivity & Shortcuts** → Request URL `https://<public-backend>/slack/interactivity`.
 5. In the admin panel **Slack** tab click **Connect Slack** → approve the install. Invite the
    bot to each channel, then **Refresh channels** (the bot only sees channels it has joined).

@@ -14,9 +14,10 @@ namespace SlackTube.Api.Endpoints;
 public static class SlackEndpoints
 {
     private const string StateCookie = "slack_oauth_state";
-    // SlackTube READS messages → history scopes are required (comment-bridge only posted).
+    // Public channels only: read the list (channels:read) + the message text (channels:history)
+    // + post the live status (chat:write). Add groups:read/groups:history to support private channels.
     private const string InstallScopes =
-        "chat:write,channels:read,groups:read,channels:history,groups:history,team:read";
+        "chat:write,channels:read,channels:history";
 
     public static void MapSlackEndpoints(this WebApplication app)
     {
