@@ -8,7 +8,7 @@ public sealed record ActiveJobView(
 
 public sealed record QueuedJobView(Guid Id, string FileName);
 
-public sealed record DoneJobView(string FileName, JobState State, string? YouTubeUrl, string? Error);
+public sealed record DoneJobView(string FileName, JobState State, string? YouTubeUrl, string? YouTubeVideoId, string? Error);
 
 public sealed record StatusView(
     int RemainingUploads,
@@ -128,7 +128,10 @@ public static class SlackBlocks
     private static string RecentLine(DoneJobView d) => d.State switch
     {
         JobState.Done when !string.IsNullOrEmpty(d.YouTubeUrl) =>
-            $":white_check_mark: *{Escape(d.FileName)}* — done → <{d.YouTubeUrl}>",
+            $":white_check_mark: *{Escape(d.FileName)}* — done → <{d.YouTubeUrl}|watch>"
+            + (string.IsNullOrEmpty(d.YouTubeVideoId)
+                ? ""
+                : $" · <https://studio.youtube.com/video/{d.YouTubeVideoId}/edit|edit in Studio>"),
         JobState.Done => $":white_check_mark: *{Escape(d.FileName)}* — done",
         JobState.Cancelled => $":no_entry_sign: *{Escape(d.FileName)}* — cancelled",
         JobState.Blocked => $":lock: *{Escape(d.FileName)}* — blocked (daily quota reached)",
