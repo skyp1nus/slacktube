@@ -35,7 +35,8 @@ public sealed class DriveDownloadService(GoogleCredentialFactory factory)
     {
         var req = service.Files.Get(fileId);
         req.SupportsAllDrives = true;
-        req.MediaDownloader.ChunkSize = chunkSize; // fewer range requests on large files
+        // MediaDownloader rejects a ChunkSize above its MaximumChunkSize → clamp so any configured value is valid.
+        req.MediaDownloader.ChunkSize = Math.Min(chunkSize, MediaDownloader.MaximumChunkSize); // fewer range requests on large files
         req.MediaDownloader.ProgressChanged += p =>
         {
             if (p.Status is DownloadStatus.Downloading or DownloadStatus.Completed)
