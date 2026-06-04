@@ -35,7 +35,11 @@ public sealed class UploadJobHandler(
     private const string PhaseProcessing = "YouTube processing";
     private const long CancelCheckBytes = 4_000_000;
 
+    // Attempts=0: never auto-retry on failure (a failed upload must not silently re-upload).
+    // DisableConcurrentExecution: a per-job lock so a restart-recovery re-enqueue can never run
+    // the same job twice in parallel (the re-entry guards below then make the second run a no-op).
     [AutomaticRetry(Attempts = 0)]
+    [DisableConcurrentExecution(timeoutInSeconds: 600)]
     public async Task RunAsync(Guid jobId, CancellationToken ct)
     {
         var job = await jobs.GetAsync(jobId, ct);
@@ -167,7 +171,13 @@ public sealed class UploadJobHandler(
         {
             logger.LogWarning("Upload job {Id} interrupted by shutdown", jobId);
             progress.Remove(jobId);
-            await FailAsync(job, "Interrupted by a restart — re-post to retry (the bot never re-uploads once upload started).");
+            // Before the YouTube upload starts nothing exists on YouTube → re-queue so startup
+            // recovery resumes it from scratch. Once Uploading/Processing it is the point of no
+            // return — never re-upload (would duplicate the video).
+            if (job.YouTubeVideoId is null && job.State is JobState.Queued or JobState.Downloading)
+                await jobs.TransitionAsync(job, JobState.Queued, "interrupted by restart — will resume", CancellationToken.None);
+            else
+                await FailAsync(job, "Interrupted after the YouTube upload started — verify in YouTube Studio; the bot won’t re-upload.");
             throw; // don't let Hangfire mark this as succeeded
         }
         catch (Exception ex)

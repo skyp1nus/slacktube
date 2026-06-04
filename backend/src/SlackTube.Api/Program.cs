@@ -3,6 +3,7 @@ using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
 using SlackTube.Api.Configuration;
 using SlackTube.Api.Data;
+using SlackTube.Api.Domain;
 using SlackTube.Api.Endpoints;
 using SlackTube.Api.Services.Google;
 using SlackTube.Api.Services.Jobs;
@@ -81,6 +82,53 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
+}
+
+// ---- recover jobs interrupted by a restart -------------------------------------------
+// Queued/Downloading happen BEFORE the YouTube upload → safe to resume from scratch (re-enqueue).
+// Uploading/Processing are the point of no return → never re-upload; fail with a verify note
+// (unless the video id was already saved, in which case the upload finished → mark Done).
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var backgroundJobs = scope.ServiceProvider.GetRequiredService<IBackgroundJobClient>();
+    var log = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup.JobRecovery");
+
+    var interrupted = db.Jobs.Where(j =>
+        j.State == JobState.Queued || j.State == JobState.Downloading ||
+        j.State == JobState.Uploading || j.State == JobState.Processing).ToList();
+
+    int resumed = 0, failed = 0, finalized = 0;
+    var now = DateTimeOffset.UtcNow;
+    foreach (var job in interrupted)
+    {
+        if (job.YouTubeVideoId is not null)
+        {
+            job.History.Add(new JobStateHistory { JobId = job.Id, FromState = job.State, ToState = JobState.Done, At = now, Note = "recovered: upload had completed" });
+            job.State = JobState.Done; job.UpdatedAt = now; finalized++;
+        }
+        else if (job.State is JobState.Uploading or JobState.Processing)
+        {
+            job.ErrorMessage = "Interrupted after the YouTube upload started — verify in YouTube Studio; the bot won’t re-upload.";
+            job.History.Add(new JobStateHistory { JobId = job.Id, FromState = job.State, ToState = JobState.Failed, At = now, Note = "recovered: interrupted past point of no return" });
+            job.State = JobState.Failed; job.UpdatedAt = now; failed++;
+        }
+        else // Queued or Downloading — resume from scratch
+        {
+            if (job.State == JobState.Downloading)
+            {
+                job.History.Add(new JobStateHistory { JobId = job.Id, FromState = job.State, ToState = JobState.Queued, At = now, Note = "recovered: re-queued after restart" });
+                job.State = JobState.Queued; job.UpdatedAt = now;
+            }
+            backgroundJobs.Enqueue<UploadJobHandler>(h => h.RunAsync(job.Id, CancellationToken.None));
+            resumed++;
+        }
+    }
+    if (interrupted.Count > 0)
+    {
+        db.SaveChanges();
+        log.LogInformation("Job recovery: {Resumed} re-queued, {Failed} failed (point of no return), {Finalized} finalized", resumed, failed, finalized);
+    }
 }
 
 app.MapGet("/", () => Results.Ok(new { service = "SlackTube", status = "ok" }));
