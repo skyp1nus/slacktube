@@ -1,0 +1,21 @@
+# SlackTube site block for the SHARED Caddy (/opt/shared). The deploy workflow copies this
+# file to /opt/shared/sites/slacktube.caddy and runs `caddy reload`.
+#
+# Routing note: unlike comment-bridge, /api/* is NOT a backend path here. In SlackTube /api/*
+# is the Next.js BFF (login/logout + the admin proxy that injects X-Admin-Token), so it must
+# go to the frontend. Only the paths that EXTERNAL callers hit directly go to the backend:
+#   Slack Events / Interactivity / OAuth  ->  /slack/*
+#   Google OAuth start + redirect         ->  /google/*
+
+slacktube.danielhub.dev {
+	encode zstd gzip
+
+	@backend path /slack/* /google/*
+	handle @backend {
+		reverse_proxy slacktube-backend-1:8080
+	}
+
+	handle {
+		reverse_proxy slacktube-frontend-1:3000
+	}
+}

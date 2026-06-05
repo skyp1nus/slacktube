@@ -1,0 +1,42 @@
+name: deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy config to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: deploy
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "deploy/docker-compose.prod.yml,deploy/slacktube.caddy"
+          target: "/opt/slacktube"
+          strip_components: 1
+
+      - name: Pull, restart, reload shared Caddy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: deploy
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/slacktube
+            export IMAGE_TAG="${{ github.event.workflow_run.head_sha }}"
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+            # Publish this app's Caddy site block into the shared Caddy, then hot-reload it.
+            install -D -m 644 slacktube.caddy /opt/shared/sites/slacktube.caddy
+            docker exec shared-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+            docker image prune -f
