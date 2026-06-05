@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
 using SlackTube.Api.Domain;
 using SlackTube.Api.Services.Google;
+using SlackTube.Api.Services.Settings;
 using SlackTube.Api.Services.Slack;
 
 namespace SlackTube.Api.Services.Jobs;
@@ -27,6 +28,7 @@ public sealed class UploadJobHandler(
     ISlackStatusService status,
     SlackClient slack,
     SlackWorkspaceService workspaces,
+    ISettingsStore settings,
     IOptions<AppOptions> appOptions,
     ILogger<UploadJobHandler> logger)
 {
@@ -71,7 +73,8 @@ public sealed class UploadJobHandler(
             if (refreshToken is null) { await FailAsync(job, "Google account token is unavailable."); return; }
 
             Directory.CreateDirectory(tempDir);
-            var chunkBytes = appOptions.Value.TransferChunkSizeBytes;
+            var uploadSettings = await settings.GetUploadSettingsAsync(ct);
+            var chunkBytes = Math.Max(1, uploadSettings.ChunkSizeMb) * 1024 * 1024;
 
             // ============================ DOWNLOAD ============================
             await jobs.TransitionAsync(job, JobState.Downloading, "download started", ct);
@@ -156,6 +159,7 @@ public sealed class UploadJobHandler(
                         progress.Set(job.Id, new JobProgress(JobState.Processing, job.BytesTotal, job.BytesTotal, PhaseProcessing));
                         _ = status.UpdateProgressAsync(job.Id);
                     },
+                    uploadSettings.Visibility,
                     chunkBytes,
                     ct);
             }

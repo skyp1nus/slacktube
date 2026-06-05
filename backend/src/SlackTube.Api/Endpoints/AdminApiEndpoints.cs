@@ -10,6 +10,8 @@ namespace SlackTube.Api.Endpoints;
 
 public sealed record CreateMappingDto(Guid SlackWorkspaceId, string SlackChannelId, Guid GoogleAccountId);
 
+public sealed record UpdateSettingsDto(string? DefaultVisibility, int? TransferChunkSizeMb);
+
 /// <summary>
 /// Admin API consumed by the Next.js BFF server-side. Guarded by an <c>X-Admin-Token</c> header
 /// (the web layer holds the key and attaches it; the browser never sees it).
@@ -42,6 +44,24 @@ public static class AdminApiEndpoints
                 google = new { conn.Connected, conn.Scopes, conn.ConnectedAt, accountCount },
                 quota = new { q.UsedUnits, q.CapUnits, q.RemainingUploads, q.TotalUploads },
             });
+        });
+
+        // ---- Settings (upload defaults) ------------------------------------------------
+        admin.MapGet("/settings", async (ISettingsStore settings, CancellationToken ct) =>
+        {
+            var s = await settings.GetUploadSettingsAsync(ct);
+            return Results.Ok(new { defaultVisibility = s.Visibility, transferChunkSizeMb = s.ChunkSizeMb });
+        });
+
+        admin.MapPatch("/settings", async (UpdateSettingsDto dto, ISettingsStore settings, CancellationToken ct) =>
+        {
+            var cur = await settings.GetUploadSettingsAsync(ct);
+            var visibility = dto.DefaultVisibility is null
+                ? cur.Visibility
+                : YouTubeUploadService.NormalizeVisibility(dto.DefaultVisibility);
+            var chunk = dto.TransferChunkSizeMb is null ? cur.ChunkSizeMb : Math.Clamp(dto.TransferChunkSizeMb.Value, 1, 1024);
+            await settings.UpdateUploadSettingsAsync(visibility, chunk, ct);
+            return Results.Ok(new { defaultVisibility = visibility, transferChunkSizeMb = chunk });
         });
 
         // ---- Slack workspaces (OAuth-installed) ----------------------------------------

@@ -62,6 +62,14 @@ export type ChannelMappingDto = {
   createdAt: string;
 };
 
+export type Visibility = "private" | "unlisted" | "public";
+
+/** Upload defaults editable from the Settings tab. */
+export type SettingsDto = {
+  defaultVisibility: Visibility;
+  transferChunkSizeMb: number;
+};
+
 /** An upload job (one Slack template message). */
 export type JobDto = {
   id: string;

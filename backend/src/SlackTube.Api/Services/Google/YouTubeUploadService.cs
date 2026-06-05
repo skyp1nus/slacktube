@@ -45,6 +45,7 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
         IList<string> tags,
         Action<long> onBytes,
         Action onProcessing,
+        string visibility,
         int chunkSize,
         CancellationToken ct)
     {
@@ -57,7 +58,7 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
                 Tags = tags.Count > 0 ? tags : null,
                 CategoryId = DefaultCategoryId,
             },
-            Status = new VideoStatus { PrivacyStatus = "private" },
+            Status = new VideoStatus { PrivacyStatus = NormalizeVisibility(visibility) },
         };
 
         var request = service.Videos.Insert(video, "snippet,status", videoStream, "video/*");
@@ -96,4 +97,12 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
         title = title.Trim();
         return title.Length <= MaxTitleLength ? title : title[..MaxTitleLength];
     }
+
+    /// <summary>Only YouTube's three privacy values are valid; anything else falls back to private.</summary>
+    public static string NormalizeVisibility(string? visibility) => visibility?.Trim().ToLowerInvariant() switch
+    {
+        "public" => "public",
+        "unlisted" => "unlisted",
+        _ => "private",
+    };
 }

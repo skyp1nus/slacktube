@@ -20,5 +20,12 @@ public class AppSettings
     /// <summary><c>ts</c> of the current live status message (deleted+reposted on queue change).</summary>
     public string? StatusMessageTs { get; set; }
 
+    // ---- upload defaults (editable from the Settings tab) ----------------------------
+    /// <summary>YouTube privacy for new uploads: private | unlisted | public.</summary>
+    public string DefaultVisibility { get; set; } = "private";
+
+    /// <summary>Drive download + YouTube upload chunk size (MB). Seeded from App config on first run.</summary>
+    public int TransferChunkSizeMb { get; set; } = 64;
+
     public DateTimeOffset UpdatedAt { get; set; }
 }

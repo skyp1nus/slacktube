@@ -1,6 +1,7 @@
 import { requireSession, backendGet, backendBaseUrl } from "@/lib/backend";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { UploadSettingsForm } from "./upload-settings-form";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,8 @@ export default async function SettingsPage() {
         <h2 className="text-2xl font-semibold tracking-tight">Settings</h2>
         <p className="text-sm text-muted-foreground">Admin account + backend configuration.</p>
       </header>
+
+      <UploadSettingsForm />
 
       <Card>
         <CardHeader>
