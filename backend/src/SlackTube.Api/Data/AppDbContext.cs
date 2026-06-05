@@ -12,6 +12,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SlackWorkspace> SlackWorkspaces => Set<SlackWorkspace>();
     public DbSet<SlackChannel> SlackChannels => Set<SlackChannel>();
     public DbSet<GoogleAccount> GoogleAccounts => Set<GoogleAccount>();
+    public DbSet<GoogleOAuthClient> GoogleOAuthClients => Set<GoogleOAuthClient>();
     public DbSet<ChannelMapping> ChannelMappings => Set<ChannelMapping>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -65,10 +66,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         ch.HasIndex(x => new { x.WorkspaceId, x.SlackChannelId }).IsUnique();
         ch.HasIndex(x => x.SlackChannelId);
 
+        var goc = b.Entity<GoogleOAuthClient>();
+        goc.ToTable("google_oauth_clients");
+        goc.HasKey(x => x.Id);
+        goc.Property(x => x.Status).HasMaxLength(32);
+        // One row per Google Cloud project: the same OAuth client id must not be added twice (else its
+        // single real per-project quota would be tracked as two independent counters → over-counting).
+        goc.HasIndex(x => x.ClientId).IsUnique();
+
         var ga = b.Entity<GoogleAccount>();
         ga.ToTable("google_accounts");
         ga.HasKey(x => x.Id);
         ga.HasIndex(x => x.CreatedAt);
+        ga.HasIndex(x => x.YouTubeChannelId); // rotation gathers all accounts sharing a channel
+        ga.HasIndex(x => x.OAuthClientId);
+        // Restrict: a client can't be deleted while accounts still reference it (issuing-client
+        // binding is permanent). The admin API surfaces this as a 409 before EF would throw.
+        ga.HasOne(x => x.OAuthClient)
+          .WithMany()
+          .HasForeignKey(x => x.OAuthClientId)
+          .OnDelete(DeleteBehavior.Restrict);
 
         var cm = b.Entity<ChannelMapping>();
         cm.ToTable("channel_mappings");

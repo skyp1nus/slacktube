@@ -1,30 +1,15 @@
 "use client";
 
 import { useEffect } from "react";
-import { AlertTriangle, MonitorPlay, Plug } from "lucide-react";
+import { AlertTriangle, MonitorPlay } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAccounts } from "@/hooks/use-accounts";
 import { AccountCard } from "./account-card";
-import { Button } from "@/components/ui/button";
+import { ConnectAccountDialog } from "./connect-account-dialog";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
-
-function startGoogleOAuth() {
-  window.location.href = `${BACKEND}/google/oauth/start`;
-}
-
-function ConnectButton({ variant = "default" }: { variant?: "default" | "outline" }) {
-  return (
-    <Button variant={variant} onClick={startGoogleOAuth}>
-      <Plug />
-      Connect Google account
-    </Button>
-  );
-}
 
 export default function AccountsPage() {
   const { data: accounts, isPending, isError, error, refetch } = useAccounts();
@@ -56,7 +41,7 @@ export default function AccountsPage() {
             Connect one or more YouTube channels. Each consent adds a new account.
           </p>
         </div>
-        <ConnectButton />
+        <ConnectAccountDialog />
       </div>
 
       {isPending ? (
@@ -72,8 +57,9 @@ export default function AccountsPage() {
             <AccountCard key={account.id} account={account} />
           ))}
           <p className="text-xs text-muted-foreground">
-            Note: YouTube quota is enforced per Google Cloud project (OAuth client), not per channel —
-            accounts sharing one OAuth client share the ~6 uploads/day cap.
+            Note: YouTube quota is enforced per project (~6 uploads/day each). Connect the SAME channel
+            through several projects to stack their quotas — uploads rotate to the next project when one
+            is exhausted. Manage projects in the Projects tab.
           </p>
         </div>
       ) : (
@@ -119,7 +105,7 @@ function EmptyState() {
           <p className="text-sm font-medium">No Google accounts connected yet</p>
           <p className="text-sm text-muted-foreground">Connect a YouTube channel account to upload videos.</p>
         </div>
-        <ConnectButton />
+        <ConnectAccountDialog />
       </CardContent>
     </Card>
   );

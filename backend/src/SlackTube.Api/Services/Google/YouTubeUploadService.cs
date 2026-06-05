@@ -12,17 +12,18 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
     private const int MaxTitleLength = 100;
     private const string DefaultCategoryId = "22"; // People & Blogs
 
-    public YouTubeService BuildService(string refreshToken) =>
+    public YouTubeService BuildService(string clientId, string clientSecret, string refreshToken) =>
         new(new BaseClientService.Initializer
         {
-            HttpClientInitializer = factory.CreateUserCredential(refreshToken),
+            HttpClientInitializer = factory.CreateUserCredential(clientId, clientSecret, refreshToken),
             ApplicationName = "SlackTube",
         });
 
     /// <summary>The authenticated account's own channel id + title + avatar (channels.list?mine=true, ~1 unit).</summary>
-    public async Task<(string? Id, string? Title, string? AvatarUrl)> GetChannelInfoAsync(string refreshToken, CancellationToken ct = default)
+    public async Task<(string? Id, string? Title, string? AvatarUrl)> GetChannelInfoAsync(
+        string clientId, string clientSecret, string refreshToken, CancellationToken ct = default)
     {
-        var request = BuildService(refreshToken).Channels.List("snippet");
+        var request = BuildService(clientId, clientSecret, refreshToken).Channels.List("snippet");
         request.Mine = true;
         var response = await request.ExecuteAsync(ct);
         var item = response.Items?.FirstOrDefault();

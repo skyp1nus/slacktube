@@ -1,3 +1,4 @@
+using Google.Apis.Auth.OAuth2.Responses;
 using Hangfire;
 using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
@@ -63,14 +64,31 @@ public sealed class UploadJobHandler(
         var tempDir = appOptions.Value.TempDownloadDir;
         var tempPath = Path.Combine(tempDir, $"{job.Id}.tmp");
 
+        // Rotation/quota bookkeeping, visible to the catch blocks for release + error flagging.
+        Guid? reservedClientId = null;
+        int reservedUnits = 0;
+        Guid? activeAccountId = null;
+
         try
         {
             if (await cancelFlags.IsRequestedAsync(job.Id)) { await MarkCancelledAsync(job, tempPath); return; }
 
-            var accountId = job.GoogleAccountId ?? await oauth.GetDefaultAccountIdAsync(ct);
-            if (accountId is null) { await FailAsync(job, "No Google account is connected."); return; }
-            var refreshToken = await oauth.GetRefreshTokenAsync(accountId.Value, ct);
-            if (refreshToken is null) { await FailAsync(job, "Google account token is unavailable."); return; }
+            var targetAccountId = job.GoogleAccountId ?? await oauth.GetDefaultAccountIdAsync(ct);
+            if (targetAccountId is null) { await FailAsync(job, "No Google account is connected."); return; }
+
+            // Rotation pool: every Active account that can upload to this channel, each bound to an
+            // Active OAuth client (= its own daily quota). One channel × N clients ⇒ N× the daily cap.
+            var candidates = await oauth.GetUploadCandidatesForChannelAsync(targetAccountId.Value, ct);
+            if (candidates.Count == 0)
+            {
+                await FailAsync(job, "No usable YouTube project for this channel — connect or enable one in the admin panel.");
+                return;
+            }
+
+            // Download (Drive) uses the target account's creds — any candidate shares the channel's Drive
+            // access, and Drive has its own quota separate from the per-project YouTube cap.
+            var downloadCreds = candidates.FirstOrDefault(c => c.AccountId == targetAccountId.Value) ?? candidates[0];
+            activeAccountId = downloadCreds.AccountId;
 
             Directory.CreateDirectory(tempDir);
             var uploadSettings = await settings.GetUploadSettingsAsync(ct);
@@ -80,7 +98,7 @@ public sealed class UploadJobHandler(
             await jobs.TransitionAsync(job, JobState.Downloading, "download started", ct);
             await status.RefreshQueueAsync(ct);
 
-            var driveService = drive.BuildService(refreshToken);
+            var driveService = drive.BuildService(downloadCreds.ClientId, downloadCreds.ClientSecret, downloadCreds.RefreshToken);
             var info = await drive.GetInfoAsync(driveService, job.DriveFileId, ct);
             if (info.IsGoogleNative) { await FailAsync(job, "Drive file is a Google-native doc, not a video."); return; }
 
@@ -125,25 +143,32 @@ public sealed class UploadJobHandler(
             // Last chance to cancel before the point of no return.
             if (await cancelFlags.IsRequestedAsync(job.Id)) { await MarkCancelledAsync(job, tempPath); return; }
 
-            // ============================ QUOTA ============================
-            if (!await quota.TryReserveUploadAsync(accountId.Value))
+            // ======================= QUOTA + ROTATION =======================
+            // Try the channel's projects most-remaining-first; reserve on the first whose daily cap
+            // still fits. When the mapped project (A) is exhausted, the next sibling (B) is used.
+            var chosen = await ReserveAcrossCandidatesAsync(candidates, quota);
+            if (chosen is null)
             {
                 SafeDelete(tempPath);
                 progress.Remove(job.Id);
-                await jobs.TransitionAsync(job, JobState.Blocked, "daily YouTube quota reached", ct);
-                await NotifyAsync(job, ":lock: Daily YouTube quota reached — this upload is blocked until after midnight PT.");
+                await jobs.TransitionAsync(job, JobState.Blocked, "all projects for this channel hit today's quota", ct);
+                await NotifyAsync(job, ":lock: All YouTube projects for this channel hit today's quota — blocked until after midnight PT.");
                 await status.RefreshQueueAsync(ct);
                 return;
             }
+            reservedClientId = chosen.OAuthClientId;
+            reservedUnits = appOptions.Value.YouTubeUploadCostUnits;
+            activeAccountId = chosen.AccountId;
 
             // ==================== UPLOAD (point of no return) ====================
             await jobs.TransitionAsync(job, JobState.Uploading, "upload started", ct);
-            job.QuotaUnitsCharged = appOptions.Value.YouTubeUploadCostUnits;
+            job.GoogleAccountId = chosen.AccountId; // record which project/account actually uploaded
+            job.QuotaUnitsCharged = reservedUnits;
             await jobs.SaveAsync(job, ct);
             progress.Set(job.Id, new JobProgress(JobState.Uploading, 0, job.BytesTotal, PhaseUpload));
             await status.UpdateProgressAsync(job.Id);
 
-            var ytService = youtube.BuildService(refreshToken);
+            var ytService = youtube.BuildService(chosen.ClientId, chosen.ClientSecret, chosen.RefreshToken);
             YouTubeUploadResult result;
             await using (var fileIn = new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
@@ -177,6 +202,12 @@ public sealed class UploadJobHandler(
         {
             logger.LogWarning("Upload job {Id} interrupted by shutdown", jobId);
             progress.Remove(jobId);
+            // Reserved units but no video id yet → the insert never completed; release so a restart
+            // doesn't strand the project's daily quota on an upload that produced nothing.
+            if (reservedClientId is not null && job.YouTubeVideoId is null)
+            {
+                try { await quota.ReleaseAsync(reservedClientId.Value, reservedUnits); } catch { /* best effort */ }
+            }
             // Before the YouTube upload starts nothing exists on YouTube → re-queue so startup
             // recovery resumes it from scratch. Once Uploading/Processing it is the point of no
             // return — never re-upload (would duplicate the video).
@@ -190,6 +221,17 @@ public sealed class UploadJobHandler(
         {
             logger.LogError(ex, "Upload job {Id} failed", jobId);
             progress.Remove(jobId);
+            // Reserved units but videos.insert never succeeded (no video id) → give the quota back so a
+            // failed attempt doesn't burn the project's daily cap (the counter is an estimate).
+            if (reservedClientId is not null && job.YouTubeVideoId is null)
+            {
+                try { await quota.ReleaseAsync(reservedClientId.Value, reservedUnits); } catch { /* best effort */ }
+            }
+            // Revoked / wrong-client / unauthorized → flag the account so rotation skips it next time.
+            if (activeAccountId is not null && job.YouTubeVideoId is null && IsAuthError(ex))
+            {
+                try { await oauth.MarkAccountErrorAsync(activeAccountId.Value); } catch { /* best effort */ }
+            }
             await FailAsync(job, Summarize(ex));
             await status.RefreshQueueAsync(CancellationToken.None);
         }
@@ -198,6 +240,30 @@ public sealed class UploadJobHandler(
             SafeDelete(tempPath);
             await cancelFlags.ClearAsync(jobId);
         }
+    }
+
+    /// <summary>Order the channel's projects by remaining quota (most headroom first) and reserve on the
+    /// first that still fits today's cap. Returns null when every project is exhausted. Internal +
+    /// static so it can be unit-tested with a fake quota service (no Redis).</summary>
+    internal static async Task<GoogleUploadCreds?> ReserveAcrossCandidatesAsync(
+        IReadOnlyList<GoogleUploadCreds> candidates, IQuotaService quota)
+    {
+        var ranked = new List<(GoogleUploadCreds creds, int remaining)>(candidates.Count);
+        foreach (var c in candidates)
+            ranked.Add((c, (await quota.GetStatusAsync(c.OAuthClientId)).RemainingUnits));
+        // OrderByDescending is a stable sort, so ties keep candidate order (oldest account first).
+        foreach (var (creds, _) in ranked.OrderByDescending(r => r.remaining))
+            if (await quota.TryReserveUploadAsync(creds.OAuthClientId))
+                return creds;
+        return null;
+    }
+
+    /// <summary>True when the failure is an OAuth token problem (revoked / wrong client / unauthorized).</summary>
+    private static bool IsAuthError(Exception ex)
+    {
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+            if (e is TokenResponseException) return true;
+        return false;
     }
 
     // ---- helpers (DB/Slack ops use None so cleanup completes even during shutdown) ----

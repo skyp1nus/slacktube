@@ -15,6 +15,7 @@
     <!-- Pin EF to the Api's version so the transitive graph doesn't unify down to 10.0.4 (MSB3277). -->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.8" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.8" />
   </ItemGroup>
 
   <ItemGroup>

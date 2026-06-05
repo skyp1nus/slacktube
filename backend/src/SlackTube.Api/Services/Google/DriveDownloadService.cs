@@ -12,10 +12,10 @@ public sealed record DriveFileInfo(string Name, long? Size, string? MimeType)
 
 public sealed class DriveDownloadService(GoogleCredentialFactory factory)
 {
-    public DriveService BuildService(string refreshToken) =>
+    public DriveService BuildService(string clientId, string clientSecret, string refreshToken) =>
         new(new BaseClientService.Initializer
         {
-            HttpClientInitializer = factory.CreateUserCredential(refreshToken),
+            HttpClientInitializer = factory.CreateUserCredential(clientId, clientSecret, refreshToken),
             ApplicationName = "SlackTube",
         });
 

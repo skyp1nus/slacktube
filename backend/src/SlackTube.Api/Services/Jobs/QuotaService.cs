@@ -13,17 +13,18 @@ public sealed record QuotaStatus(int UsedUnits, int CapUnits, int UploadCost)
 }
 
 /// <summary>
-/// Per-Google-account daily YouTube quota counter in Redis, reset at midnight Pacific Time.
-/// NOTE: YouTube quota is actually enforced per Google Cloud project (OAuth client), so accounts
-/// sharing one OAuth client share the real cap — this counter tracks usage per account regardless.
+/// Per-OAuth-client daily YouTube quota counter in Redis, reset at midnight Pacific Time. YouTube
+/// quota is enforced per Google Cloud project (OAuth client), so the counter is keyed by the OAuth
+/// client id: every account that consented through the same client shares this daily cap, and
+/// connecting one channel through several clients gives it that many independent caps.
 /// </summary>
 public interface IQuotaService
 {
-    Task<QuotaStatus> GetStatusAsync(Guid? googleAccountId);
-    /// <summary>Atomically reserve one upload's units against the account's PT cap (false if it would exceed).</summary>
-    Task<bool> TryReserveUploadAsync(Guid googleAccountId);
+    Task<QuotaStatus> GetStatusAsync(Guid? oauthClientId);
+    /// <summary>Atomically reserve one upload's units against the client's PT cap (false if it would exceed).</summary>
+    Task<bool> TryReserveUploadAsync(Guid oauthClientId);
     /// <summary>Give units back (only when reserved but the API was never called).</summary>
-    Task ReleaseAsync(Guid googleAccountId, int units);
+    Task ReleaseAsync(Guid oauthClientId, int units);
 }
 
 public sealed class QuotaService(IConnectionMultiplexer redis, IOptions<AppOptions> options) : IQuotaService
@@ -31,20 +32,23 @@ public sealed class QuotaService(IConnectionMultiplexer redis, IOptions<AppOptio
     private static readonly TimeZoneInfo Pacific = ResolvePacific();
     private readonly AppOptions _opt = options.Value;
 
-    public async Task<QuotaStatus> GetStatusAsync(Guid? googleAccountId)
+    public async Task<QuotaStatus> GetStatusAsync(Guid? oauthClientId)
     {
-        if (googleAccountId is null)
-            return new QuotaStatus(0, _opt.YouTubeDailyQuotaUnits, _opt.YouTubeUploadCostUnits);
+        // No client (e.g. an account not yet bound to one) ⇒ no usable quota. Report ZERO cap rather
+        // than a full cap, so the UI shows "0 of 0 uploads" for a broken/unbound account instead of
+        // a misleading "full quota available".
+        if (oauthClientId is null)
+            return new QuotaStatus(0, 0, _opt.YouTubeUploadCostUnits);
 
-        var val = await redis.GetDatabase().StringGetAsync(RedisKeys.Quota(googleAccountId.Value, PtDate()));
+        var val = await redis.GetDatabase().StringGetAsync(RedisKeys.Quota(oauthClientId.Value, PtDate()));
         var used = val.HasValue ? (int)val : 0;
         return new QuotaStatus(used, _opt.YouTubeDailyQuotaUnits, _opt.YouTubeUploadCostUnits);
     }
 
-    public async Task<bool> TryReserveUploadAsync(Guid googleAccountId)
+    public async Task<bool> TryReserveUploadAsync(Guid oauthClientId)
     {
         var db = redis.GetDatabase();
-        var key = RedisKeys.Quota(googleAccountId, PtDate());
+        var key = RedisKeys.Quota(oauthClientId, PtDate());
         var cost = _opt.YouTubeUploadCostUnits;
 
         var after = await db.StringIncrementAsync(key, cost);
@@ -59,8 +63,8 @@ public sealed class QuotaService(IConnectionMultiplexer redis, IOptions<AppOptio
         return true;
     }
 
-    public Task ReleaseAsync(Guid googleAccountId, int units)
-        => redis.GetDatabase().StringDecrementAsync(RedisKeys.Quota(googleAccountId, PtDate()), units);
+    public Task ReleaseAsync(Guid oauthClientId, int units)
+        => redis.GetDatabase().StringDecrementAsync(RedisKeys.Quota(oauthClientId, PtDate()), units);
 
     // ---- Pacific-Time helpers --------------------------------------------------------
     private static string PtDate()

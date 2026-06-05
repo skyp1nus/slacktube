@@ -143,7 +143,8 @@ Useful endpoints: `GET /health`, Hangfire dashboard at `/hangfire` (local-reques
 | `TokenEncryption__Key` | **Required.** ≥16-char secret; AES key for encrypting tokens at rest |
 | `Slack__SigningSecret` | App signing secret (env-only; verifies request signatures) |
 | `Slack__ClientId` / `Slack__ClientSecret` / `Slack__RedirectUri` | Slack OAuth-install app (redirect = `…/slack/oauth/callback`) |
-| `Google__ClientId`, `Google__ClientSecret`, `Google__RedirectUri` | Google OAuth client (redirect must match the console exactly) |
+| `Google__ClientId`, `Google__ClientSecret` | Optional seed/fallback OAuth client — auto-migrated to a "Default (env)" project on startup. Manage projects in the **Projects** tab. |
+| `Google__RedirectUri` | Global OAuth callback (`…/google/oauth/callback`); **every** project's OAuth client must register this exact URI |
 | `Admin__Username`, `Admin__Password` | Single-admin login (also usable as the admin-API key) |
 | `Admin__ApiKey` | Token the web panel sends as `X-Admin-Token` (falls back to `Admin__Password`) |
 | `App__PublicBaseUrl` | Public URL of the backend (for OAuth redirect/links) |
@@ -163,9 +164,9 @@ bun run dev                     # → http://localhost:3000
 ```
 
 Sign in, then: **Slack** tab → *Connect Slack* (OAuth install) and invite the bot to your
-channels → **Accounts** tab → *Connect Google account* (one or more) → **Mapping** tab →
-route each Slack channel to a Google account. The dashboard shows connection status + job
-history.
+channels → **Projects** tab → *Add project* (one OAuth client per Cloud project) → **Accounts**
+tab → *Connect Google account* (pick a project, one or more channels) → **Mapping** tab → route
+each Slack channel to a Google account. The dashboard shows connection status + job history.
 
 ---
 
@@ -188,22 +189,34 @@ history.
 
 ---
 
-## 5. Google accounts (multiple)
+## 5. YouTube projects + Google accounts
 
-1. Google Cloud console → enable **YouTube Data API v3** + **Google Drive API**.
-2. Create an **OAuth client (Web application)**; add Authorized redirect URI
-   `http://localhost:5080/google/oauth/callback` (must match `Google__RedirectUri`).
-3. Put client id/secret in the backend config.
-4. In the admin panel **Accounts** tab click **Connect Google account** — consent with a
-   YouTube channel account. Scopes: `youtube.upload` + `drive.readonly`. **Each consent adds a
-   new account** (repeat for more channels); the channel id+title are fetched for display and
-   the refresh token is stored **encrypted** (AES-256-GCM). One consent covers download + upload.
+YouTube quota is enforced **per Google Cloud project (OAuth client)** — default ~6 uploads/day.
+SlackTube manages a **pool of OAuth clients** (one per Cloud project) from the **Projects** tab;
+connecting the **same channel through several projects** stacks their quotas, and uploads
+**rotate** to the next project when one is exhausted (N projects ⇒ N×6 uploads/day to one channel).
 
-> Quota note: YouTube quota is enforced **per Google Cloud project (OAuth client)**, not per
-> channel — accounts sharing one OAuth client share the daily ~6 uploads. A true per-account
-> quota needs a separate Cloud project + OAuth client per account. `youtube.upload` is a
-> sensitive scope (production needs Google verification; for testing add the account as a Test
-> User on the consent screen).
+**Per Google Cloud project** (repeat for each project you want in the pool):
+
+1. Enable **YouTube Data API v3** + **Google Drive API**.
+2. Create an **OAuth client (Web application)**. **Every project must register the SAME Authorized
+   redirect URI** — `https://<public-backend>/google/oauth/callback` (locally
+   `http://localhost:5080/google/oauth/callback`) — because the callback URL is global.
+3. Configure the **consent screen** with the same scopes: `youtube.upload`, `youtube.readonly`,
+   `drive.readonly`. (`youtube.upload` is sensitive — production needs Google verification; for
+   testing add the channel's Google account as a **Test User**.)
+4. In the admin panel **Projects** tab → **Add project**: paste the **OAuth client id + secret**
+   (the secret is stored **encrypted**, AES-256-GCM, and is never shown again). Enable/disable or
+   delete projects there; a project can't be deleted while accounts still use it.
+
+**Connect a channel:** **Accounts** tab → **Connect Google account** → pick **which project** to
+consent with → choose the YouTube channel. Each consent adds a new account bound permanently to
+that project (its refresh token can only be refreshed by its issuing client). Connect the **same
+channel under a second project** to add another daily quota for it.
+
+> Backward compatibility: a single-client deploy that still sets `Google__ClientId/Secret` is
+> auto-migrated on startup to one seeded **"Default (env)"** project, with all existing accounts
+> bound to it. Once UI projects exist, `Google__*` is just an inert seed/fallback.
 
 ---
 
