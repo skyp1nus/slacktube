@@ -1,0 +1,61 @@
+name: slacktube
+
+# SlackTube production stack. Owns NO infrastructure: Postgres, Redis and Caddy live in the
+# shared /opt/shared stack. Both services join the pre-created external "web" network and reach
+# the shared Postgres/Redis by their network aliases (postgres / redis).
+#
+# Container names are pinned so the shared Caddy upstreams and the frontend's server-side BFF
+# target (BACKEND_URL=http://slacktube-backend-1:8080) stay stable.
+
+services:
+  backend:
+    image: ghcr.io/${GH_REPO:-skyp1nus/slacktube}/backend:${IMAGE_TAG:-latest}
+    container_name: slacktube-backend-1
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      DOTNET_gcServer: "0"                       # workstation GC: lower idle RSS inside the 640m cap
+      ConnectionStrings__Postgres: ${ConnectionStrings__Postgres}
+      ConnectionStrings__Redis: ${ConnectionStrings__Redis:-redis:6379}
+      TokenEncryption__Key: ${TokenEncryption__Key}
+      Admin__Username: ${Admin__Username}
+      Admin__Password: ${Admin__Password}
+      Admin__ApiKey: ${Admin__ApiKey}
+      Google__ClientId: ${Google__ClientId}
+      Google__ClientSecret: ${Google__ClientSecret}
+      Google__RedirectUri: ${App__PublicBaseUrl}/google/oauth/callback
+      Slack__SigningSecret: ${Slack__SigningSecret}
+      Slack__ClientId: ${Slack__ClientId}
+      Slack__ClientSecret: ${Slack__ClientSecret}
+      Slack__RedirectUri: ${App__PublicBaseUrl}/slack/oauth/callback
+      App__PublicBaseUrl: ${App__PublicBaseUrl}
+      App__AdminPanelUrl: ${App__PublicBaseUrl}   # panel + OAuth share one origin behind Caddy
+      App__TempDownloadDir: /tmp/slacktube-uploads
+      App__TransferChunkSizeMb: ${App__TransferChunkSizeMb:-64}
+    mem_limit: 640m
+    networks: [web]
+
+  frontend:
+    image: ghcr.io/${GH_REPO:-skyp1nus/slacktube}/frontend:${IMAGE_TAG:-latest}
+    container_name: slacktube-frontend-1
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      NODE_ENV: production
+      # Server-side BFF target (admin API proxy). Internal, by pinned container name.
+      BACKEND_URL: http://slacktube-backend-1:8080
+      # Public origin — used server-side to render the OAuth link; the client bundle already
+      # has this value baked in at build time (see ci.yml build-arg).
+      NEXT_PUBLIC_BACKEND_URL: ${App__PublicBaseUrl}
+      BACKEND_ADMIN_TOKEN: ${Admin__ApiKey}       # must equal backend Admin__ApiKey (X-Admin-Token)
+      ADMIN_USER: ${Admin__Username}
+      ADMIN_PASSWORD: ${Admin__Password}
+      SESSION_SECRET: ${SESSION_SECRET}
+      COOKIE_SECURE: "true"                        # panel is served over HTTPS
+    mem_limit: 320m
+    networks: [web]
+
+networks:
+  web:
+    external: true

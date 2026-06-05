@@ -1,0 +1,78 @@
+name: CI
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore backend/SlackTube.slnx
+      - name: Build
+        run: dotnet build backend/SlackTube.slnx -c Release --no-restore
+      - name: Test
+        run: dotnet test backend/SlackTube.slnx -c Release --no-build --verbosity normal
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Build
+        working-directory: web
+        run: bun run build
+
+  # Images are built + pushed ONLY on main. On dev/PRs the jobs above just gate correctness.
+  docker:
+    needs: [backend, frontend]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/backend:latest
+            ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          file: ./web/Dockerfile
+          push: true
+          # NEXT_PUBLIC_BACKEND_URL is inlined into the client bundle at build time
+          # (the "Connect Google/Slack" buttons are client components that navigate the
+          # browser to ${NEXT_PUBLIC_BACKEND_URL}/google|slack/oauth/start). It MUST be
+          # the public origin, baked here — a runtime env cannot override an inlined value.
+          build-args: |
+            NEXT_PUBLIC_BACKEND_URL=https://slacktube.yeromenko.dev
+          tags: |
+            ghcr.io/${{ github.repository }}/frontend:latest
+            ghcr.io/${{ github.repository }}/frontend:${{ github.sha }}
