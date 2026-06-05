@@ -7,7 +7,7 @@
 #   Slack Events / Interactivity / OAuth  ->  /slack/*
 #   Google OAuth start + redirect         ->  /google/*
 
-slacktube.yeromenko.dev {
+slacktube.danielhub.dev {
 	encode zstd gzip
 
 	@backend path /slack/* /google/*

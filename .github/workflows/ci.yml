@@ -72,7 +72,7 @@ jobs:
           # browser to ${NEXT_PUBLIC_BACKEND_URL}/google|slack/oauth/start). It MUST be
           # the public origin, baked here — a runtime env cannot override an inlined value.
           build-args: |
-            NEXT_PUBLIC_BACKEND_URL=https://slacktube.yeromenko.dev
+            NEXT_PUBLIC_BACKEND_URL=https://slacktube.danielhub.dev
           tags: |
             ghcr.io/${{ github.repository }}/frontend:latest
             ghcr.io/${{ github.repository }}/frontend:${{ github.sha }}

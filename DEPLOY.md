@@ -8,7 +8,7 @@ one shared Postgres + Redis. This app's stack owns **no** infrastructure of its 
   Internet ──► :80/:443 ─┤ shared-caddy-1   postgres (alias)   redis (alias)           │
                          └───────┬───────────────┬───────────────┬─────────────────────┘
                                  │ web network    │               │
-        slacktube.yeromenko.dev  │                │               │
+        slacktube.danielhub.dev  │                │               │
            /slack/* /google/* ───┼──► slacktube-backend-1:8080 ───┤ (Postgres: db slacktube)
            everything else ──────┼──► slacktube-frontend-1:3000   └ (Redis: dedup/quota/cancel)
                                  │           │ BFF server-side: BACKEND_URL → backend-1:8080
@@ -16,7 +16,7 @@ one shared Postgres + Redis. This app's stack owns **no** infrastructure of its 
 
 ## Topology & routing
 
-| Path on `slacktube.yeromenko.dev` | Goes to | Why |
+| Path on `slacktube.danielhub.dev` | Goes to | Why |
 |---|---|---|
 | `/slack/*`  | `slacktube-backend-1:8080` | Slack Events/Interactivity/OAuth hit the backend directly |
 | `/google/*` | `slacktube-backend-1:8080` | Google OAuth start + redirect |
@@ -31,7 +31,7 @@ one shared Postgres + Redis. This app's stack owns **no** infrastructure of its 
 
 1. **Server-side BFF** — `BACKEND_URL=http://slacktube-backend-1:8080` (runtime env). The admin
    proxy + auth use this; it stays on the internal `web` network.
-2. **Browser OAuth nav** — `NEXT_PUBLIC_BACKEND_URL=https://slacktube.yeromenko.dev` (**build-arg**,
+2. **Browser OAuth nav** — `NEXT_PUBLIC_BACKEND_URL=https://slacktube.danielhub.dev` (**build-arg**,
    inlined). The "Connect Google/Slack" buttons are client components that set
    `window.location` to `${NEXT_PUBLIC_BACKEND_URL}/google|slack/oauth/start`. Baked at build in
    `ci.yml`; a runtime value cannot override an inlined one.
@@ -93,10 +93,10 @@ isn't reachable yet it will crash-loop (`restart: unless-stopped`) until it is �
 
 | Where | Value |
 |---|---|
-| Google Cloud console → Authorized redirect URI | `https://slacktube.yeromenko.dev/google/oauth/callback` |
-| Slack app → OAuth redirect URL | `https://slacktube.yeromenko.dev/slack/oauth/callback` |
-| Slack app → Event Subscriptions Request URL | `https://slacktube.yeromenko.dev/slack/events` |
-| Slack app → Interactivity Request URL | `https://slacktube.yeromenko.dev/slack/interactivity` |
+| Google Cloud console → Authorized redirect URI | `https://slacktube.danielhub.dev/google/oauth/callback` |
+| Slack app → OAuth redirect URL | `https://slacktube.danielhub.dev/slack/oauth/callback` |
+| Slack app → Event Subscriptions Request URL | `https://slacktube.danielhub.dev/slack/events` |
+| Slack app → Interactivity Request URL | `https://slacktube.danielhub.dev/slack/interactivity` |
 
 ## Notes / optional hardening
 
