@@ -55,7 +55,9 @@ public sealed partial class SlackTemplateParser
         {
             var firstRest = lines[descIdx].TrimStart()["description:".Length..];
             var rest = string.Join('\n', lines.Skip(descIdx + 1));
-            description = (firstRest + "\n" + rest).Trim();
+            // Unwrap Slack link/mention markup (<url|label>, <@U1|name>, …) → plain text, mirroring
+            // the video field; raw angle brackets would otherwise reach YouTube as invalidDescription.
+            description = SlackMrkdwn.ToPlainText((firstRest + "\n" + rest).Trim());
             if (description.Length == 0) description = null;
         }
 

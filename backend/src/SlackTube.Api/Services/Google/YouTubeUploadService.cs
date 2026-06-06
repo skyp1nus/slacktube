@@ -10,6 +10,7 @@ public sealed record YouTubeUploadResult(string VideoId, string Url);
 public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
 {
     private const int MaxTitleLength = 100;
+    private const int MaxDescriptionLength = 5000;
     private const string DefaultCategoryId = "22"; // People & Blogs
 
     public YouTubeService BuildService(string clientId, string clientSecret, string refreshToken) =>
@@ -55,7 +56,7 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             Snippet = new VideoSnippet
             {
                 Title = NormalizeTitle(title),
-                Description = description ?? string.Empty,
+                Description = NormalizeDescription(description),
                 Tags = tags.Count > 0 ? tags : null,
                 CategoryId = DefaultCategoryId,
             },
@@ -92,12 +93,26 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
         return new YouTubeUploadResult(videoId, $"https://youtu.be/{videoId}");
     }
 
-    private static string NormalizeTitle(string title)
+    // YouTube rejects any '<' or '>' in a title/description (invalidTitle / invalidDescription).
+    // Slack markup is already unwrapped upstream; these strips are the last-line guard and also
+    // sanitise jobs whose description was captured before that unwrap existed.
+    internal static string NormalizeTitle(string? title)
     {
         if (string.IsNullOrWhiteSpace(title)) return "Untitled upload";
-        title = title.Trim();
+        title = StripAngleBrackets(title).Trim();
+        if (title.Length == 0) return "Untitled upload";
         return title.Length <= MaxTitleLength ? title : title[..MaxTitleLength];
     }
+
+    internal static string NormalizeDescription(string? description)
+    {
+        if (string.IsNullOrEmpty(description)) return string.Empty;
+        var d = StripAngleBrackets(description);
+        return d.Length <= MaxDescriptionLength ? d : d[..MaxDescriptionLength];
+    }
+
+    private static string StripAngleBrackets(string s) =>
+        s.Replace("<", string.Empty).Replace(">", string.Empty);
 
     /// <summary>Only YouTube's three privacy values are valid; anything else falls back to private.</summary>
     public static string NormalizeVisibility(string? visibility) => visibility?.Trim().ToLowerInvariant() switch
