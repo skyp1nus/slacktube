@@ -57,7 +57,7 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             {
                 Title = NormalizeTitle(title),
                 Description = NormalizeDescription(description),
-                Tags = tags.Count > 0 ? tags : null,
+                Tags = NormalizeTags(tags),
                 CategoryId = DefaultCategoryId,
             },
             Status = new VideoStatus { PrivacyStatus = NormalizeVisibility(visibility) },
@@ -113,6 +113,32 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
 
     private static string StripAngleBrackets(string s) =>
         s.Replace("<", string.Empty).Replace(">", string.Empty);
+
+    // YouTube returns invalidTags when a tag holds a '<'/'>' or when the tags' combined length
+    // exceeds ~500 chars. It serialises tags as an array and wraps any tag containing whitespace in
+    // double quotes — those quotes count toward the limit, so a spaced tag costs length + 2. We strip
+    // brackets, trim/dedupe, then keep tags until the quote-aware budget is spent. Margin under 500.
+    private const int MaxTagLength = 100;
+    private const int MaxTagsTotalChars = 480;
+
+    internal static IList<string>? NormalizeTags(IEnumerable<string>? tags)
+    {
+        if (tags is null) return null;
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var budget = 0;
+        foreach (var raw in tags)
+        {
+            var t = StripAngleBrackets(raw).Trim();
+            if (t.Length > MaxTagLength) t = t[..MaxTagLength].Trim();
+            if (t.Length == 0 || !seen.Add(t)) continue;
+            var cost = t.Length + (t.Any(char.IsWhiteSpace) ? 2 : 0);
+            if (budget + cost > MaxTagsTotalChars) break;
+            budget += cost;
+            result.Add(t);
+        }
+        return result.Count > 0 ? result : null;
+    }
 
     /// <summary>Only YouTube's three privacy values are valid; anything else falls back to private.</summary>
     public static string NormalizeVisibility(string? visibility) => visibility?.Trim().ToLowerInvariant() switch

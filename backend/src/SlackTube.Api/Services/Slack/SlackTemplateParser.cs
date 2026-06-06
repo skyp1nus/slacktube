@@ -134,17 +134,19 @@ public sealed partial class SlackTemplateParser
             if (seen.Add(t)) tags.Add(t);
         }
 
-        // YouTube caps the combined tag length (~500 chars incl. separators).
-        var total = tags.Sum(t => t.Length + 1);
+        // YouTube caps the combined tag length (~500 chars). A tag containing whitespace is wrapped
+        // in double quotes by YouTube and those quotes count, so a spaced tag costs length + 2.
+        static int TagCost(string t) => t.Length + (t.Any(char.IsWhiteSpace) ? 2 : 0);
+        var total = tags.Sum(TagCost);
         if (total > MaxTagsTotalLength)
         {
             var kept = new List<string>();
             var run = 0;
             foreach (var t in tags)
             {
-                if (run + t.Length + 1 > MaxTagsTotalLength) break;
+                if (run + TagCost(t) > MaxTagsTotalLength) break;
                 kept.Add(t);
-                run += t.Length + 1;
+                run += TagCost(t);
             }
             warnings.Add($"Tags total ~{total} chars exceed YouTube's ~{MaxTagsTotalLength} limit — kept the first {kept.Count}.");
             tags = kept;
