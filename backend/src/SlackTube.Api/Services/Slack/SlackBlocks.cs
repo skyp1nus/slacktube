@@ -15,7 +15,9 @@ public sealed record StatusView(
     int TotalUploads,
     ActiveJobView? Active,
     IReadOnlyList<QueuedJobView> Queued,
-    IReadOnlyList<DoneJobView> Recent);
+    IReadOnlyList<DoneJobView> Recent,
+    int UploadedLast24h,
+    string? ChannelTitle);
 
 /// <summary>Builds Block Kit payloads (plain anonymous objects serialized to JSON).</summary>
 public static class SlackBlocks
@@ -24,9 +26,14 @@ public static class SlackBlocks
 
     public static (string text, object[] blocks) Status(StatusView v)
     {
+        var channel = string.IsNullOrWhiteSpace(v.ChannelTitle) ? "" : $" · :tv: *{Escape(v.ChannelTitle!)}*";
+        var header = $":clipboard: *Upload queue*{channel} · {v.RemainingUploads}/{v.TotalUploads} remaining today";
+        if (v.UploadedLast24h > 0)
+            header += $" · :white_check_mark: {v.UploadedLast24h} uploaded in last 24h";
+
         var blocks = new List<object>
         {
-            Section($":clipboard: *Upload queue* · {v.RemainingUploads}/{v.TotalUploads} remaining today"),
+            Section(header),
         };
 
         if (v.Active is { } a)

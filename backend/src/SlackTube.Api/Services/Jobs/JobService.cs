@@ -20,7 +20,8 @@ public sealed record NewJob(
 public sealed record StatusSnapshot(
     UploadJob? Active,
     IReadOnlyList<UploadJob> Queued,
-    IReadOnlyList<UploadJob> Recent);
+    IReadOnlyList<UploadJob> Recent,
+    int UploadedLast24h);
 
 public interface IJobService
 {
@@ -119,7 +120,15 @@ public sealed class JobService(AppDbContext db) : IJobService
             .Take(recentCount)
             .ToListAsync(ct);
 
-        return new StatusSnapshot(active, queued, recent);
+        // Uploads completed in this channel over the rolling last 24h (UpdatedAt of a Done job = when it
+        // finished). Surfaced in the status header so a channel sees its recent throughput at a glance.
+        var dayAgo = DateTimeOffset.UtcNow.AddHours(-24);
+        var uploadedLast24h = await db.Jobs.AsNoTracking()
+            .CountAsync(j => j.SlackChannelId == slackChannelId
+                          && j.State == JobState.Done
+                          && j.UpdatedAt >= dayAgo, ct);
+
+        return new StatusSnapshot(active, queued, recent, uploadedLast24h);
     }
 
     public async Task<IReadOnlyList<UploadJob>> GetHistoryAsync(int take = 50, CancellationToken ct = default)
