@@ -23,6 +23,34 @@ public sealed record StatusSnapshot(
     IReadOnlyList<UploadJob> Recent,
     int UploadedLast24h);
 
+/// <summary>Optional, AND-combined filters for the admin job history grid (all null = match all).</summary>
+public sealed record JobHistoryFilter(
+    JobState? State,
+    string? Channel,
+    string? Tag,
+    Guid? Account,
+    DateTimeOffset? From,
+    DateTimeOffset? To,
+    string? Search);
+
+/// <summary>
+/// A history page already enriched with display names. The names are resolved in one extra query each
+/// (not via a navigation — UploadJob.SlackChannelId is a plain string), so the endpoint stays N+1-free.
+/// </summary>
+public sealed record JobHistoryItem(
+    UploadJob Job,
+    string? ChannelName,
+    string? GoogleAccountLabel);
+
+/// <summary>Facet options for the filter UI — only values that actually occur in the jobs table.</summary>
+public sealed record JobFilterOptions(
+    IReadOnlyList<ChannelFacet> Channels,
+    IReadOnlyList<string> Tags,
+    IReadOnlyList<AccountFacet> Accounts);
+
+public sealed record ChannelFacet(string Id, string Name);
+public sealed record AccountFacet(string Id, string Label);
+
 public interface IJobService
 {
     Task<UploadJob> CreateAsync(NewJob input, CancellationToken ct = default);
@@ -32,7 +60,8 @@ public interface IJobService
     Task SaveAsync(UploadJob job, CancellationToken ct = default);
     Task<StatusSnapshot> GetStatusSnapshotAsync(string slackChannelId, int recentCount = 5, CancellationToken ct = default);
     Task<IReadOnlyList<UploadJob>> GetHistoryAsync(int take = 50, CancellationToken ct = default);
-    Task<(IReadOnlyList<UploadJob> Items, int Total)> GetHistoryPagedAsync(JobState? state, int page, int pageSize, CancellationToken ct = default);
+    Task<(IReadOnlyList<JobHistoryItem> Items, int Total)> GetHistoryPagedAsync(JobHistoryFilter filter, int page, int pageSize, CancellationToken ct = default);
+    Task<JobFilterOptions> GetJobFilterOptionsAsync(CancellationToken ct = default);
     Task<(int UploadsToday, int UploadsLast24h, int ErrorsLast24h)> GetDashboardCountsAsync(CancellationToken ct = default);
 }
 
@@ -137,18 +166,89 @@ public sealed class JobService(AppDbContext db) : IJobService
             .Take(take)
             .ToListAsync(ct);
 
-    public async Task<(IReadOnlyList<UploadJob> Items, int Total)> GetHistoryPagedAsync(
-        JobState? state, int page, int pageSize, CancellationToken ct = default)
+    public async Task<(IReadOnlyList<JobHistoryItem> Items, int Total)> GetHistoryPagedAsync(
+        JobHistoryFilter filter, int page, int pageSize, CancellationToken ct = default)
     {
         var query = db.Jobs.AsNoTracking().AsQueryable();
-        if (state is not null) query = query.Where(j => j.State == state.Value);
+        if (filter.State is not null) query = query.Where(j => j.State == filter.State.Value);
+        if (!string.IsNullOrEmpty(filter.Channel)) query = query.Where(j => j.SlackChannelId == filter.Channel);
+        // jsonb containment: Npgsql translates List<string>.Contains to the @> operator over the jsonb column.
+        if (!string.IsNullOrEmpty(filter.Tag)) query = query.Where(j => j.Tags.Contains(filter.Tag));
+        if (filter.Account is not null) query = query.Where(j => j.GoogleAccountId == filter.Account.Value);
+        if (filter.From is not null) query = query.Where(j => j.CreatedAt >= filter.From.Value);
+        if (filter.To is not null) query = query.Where(j => j.CreatedAt <= filter.To.Value);
+        if (!string.IsNullOrEmpty(filter.Search))
+        {
+            // ILike for case-insensitive substring; escape LIKE metacharacters so a literal % or _ is matched.
+            var escaped = filter.Search.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+            var pattern = $"%{escaped}%";
+            query = query.Where(j => EF.Functions.ILike((j.OriginalFileName ?? j.Title) ?? "", pattern, "\\"));
+        }
+
         var total = await query.CountAsync(ct);
-        var items = await query
+        var jobs = await query
             .OrderByDescending(j => j.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(ct);
+
+        // Resolve display names without N+1: one query per dimension over only the ids on this page.
+        var channelIds = jobs.Select(j => j.SlackChannelId).Distinct().ToList();
+        var accountIds = jobs.Where(j => j.GoogleAccountId is not null).Select(j => j.GoogleAccountId!.Value).Distinct().ToList();
+
+        // Same SlackChannelId can recur across workspaces — group client-side and keep one name per id.
+        var channelNames = (await db.SlackChannels.AsNoTracking()
+                .Where(c => channelIds.Contains(c.SlackChannelId))
+                .Select(c => new { c.SlackChannelId, c.Name })
+                .ToListAsync(ct))
+            .GroupBy(c => c.SlackChannelId)
+            .ToDictionary(g => g.Key, g => g.First().Name);
+
+        var accountLabels = await db.GoogleAccounts.AsNoTracking()
+            .Where(a => accountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.Label, ct);
+
+        var items = jobs.Select(j => new JobHistoryItem(
+            j,
+            channelNames.GetValueOrDefault(j.SlackChannelId),
+            j.GoogleAccountId is { } gid ? accountLabels.GetValueOrDefault(gid) : null)).ToList();
+
         return (items, total);
+    }
+
+    public async Task<JobFilterOptions> GetJobFilterOptionsAsync(CancellationToken ct = default)
+    {
+        // Only surface channels that actually occur in jobs, joined to slack_channels for the name.
+        var channelIds = await db.Jobs.AsNoTracking()
+            .Select(j => j.SlackChannelId).Distinct().ToListAsync(ct);
+        var channelNames = (await db.SlackChannels.AsNoTracking()
+                .Where(c => channelIds.Contains(c.SlackChannelId))
+                .Select(c => new { c.SlackChannelId, c.Name })
+                .ToListAsync(ct))
+            .GroupBy(c => c.SlackChannelId)
+            .ToDictionary(g => g.Key, g => g.First().Name);
+        var channels = channelIds
+            .Select(id => new ChannelFacet(id, channelNames.GetValueOrDefault(id, id))) // fall back to the id
+            .OrderBy(c => c.Name, StringComparer.Ordinal)
+            .ToList();
+
+        // SelectMany over a jsonb List<string> doesn't translate in Npgsql — unnest via raw SQL instead.
+        var tags = await db.Database
+            .SqlQueryRaw<string>("SELECT DISTINCT jsonb_array_elements_text(\"Tags\") AS \"Value\" FROM upload_jobs")
+            .ToListAsync(ct);
+        tags.Sort(StringComparer.Ordinal);
+
+        var accountIds = await db.Jobs.AsNoTracking()
+            .Where(j => j.GoogleAccountId != null)
+            .Select(j => j.GoogleAccountId!.Value).Distinct().ToListAsync(ct);
+        var accounts = (await db.GoogleAccounts.AsNoTracking()
+                .Where(a => accountIds.Contains(a.Id))
+                .Select(a => new AccountFacet(a.Id.ToString(), a.Label))
+                .ToListAsync(ct))
+            .OrderBy(a => a.Label, StringComparer.Ordinal) // ordinal sort is in-memory: a custom comparer can't translate to SQL
+            .ToList();
+
+        return new JobFilterOptions(channels, tags, accounts);
     }
 
     public async Task<(int UploadsToday, int UploadsLast24h, int ErrorsLast24h)> GetDashboardCountsAsync(

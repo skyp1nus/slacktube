@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { AlertTriangle, Gauge, MonitorPlay, Plug, UploadCloud } from "lucide-react";
+import { AlertTriangle, ExternalLink, Gauge, Hash, Inbox, MonitorPlay, Plug, UploadCloud } from "lucide-react";
 
 import type { DashboardStats, JobDto } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -162,19 +162,47 @@ function SecondaryStats({ stats, isLoading }: { stats: DashboardStats | undefine
   );
 }
 
-function stateVariant(state: string): "default" | "secondary" | "destructive" | "outline" {
-  switch (state) {
-    case "Done":
-      return "default";
-    case "Failed":
-    case "Cancelled":
-    case "Blocked":
-      return "destructive";
-    case "Queued":
-      return "outline";
-    default:
-      return "secondary";
+const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto", style: "narrow" });
+
+/** Compact "2h ago" style timestamp for the recent-jobs list. */
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const diffSec = Math.round((then - Date.now()) / 1000);
+  const abs = Math.abs(diffSec);
+  if (abs < 60) return rtf.format(diffSec, "second");
+  if (abs < 3600) return rtf.format(Math.round(diffSec / 60), "minute");
+  if (abs < 86_400) return rtf.format(Math.round(diffSec / 3600), "hour");
+  return rtf.format(Math.round(diffSec / 86_400), "day");
+}
+
+function RecentStateBadge({ state }: { state: string }) {
+  if (state === "Done") {
+    return (
+      <Badge variant="outline" className="shrink-0 border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400">
+        {state}
+      </Badge>
+    );
   }
+  if (state === "Failed" || state === "Cancelled" || state === "Blocked") {
+    return (
+      <Badge variant="destructive" className="shrink-0">
+        {state}
+      </Badge>
+    );
+  }
+  if (state === "Queued") {
+    return (
+      <Badge variant="outline" className="shrink-0">
+        {state}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="shrink-0 border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400">
+      {state}
+    </Badge>
+  );
 }
 
 function RecentJobsCard() {
@@ -185,32 +213,70 @@ function RecentJobsCard() {
     <Card>
       <CardHeader>
         <CardTitle>Recent jobs</CardTitle>
-        <CardDescription>Latest uploads{data ? ` · ${data.total} total` : ""}</CardDescription>
+        <CardDescription>Last 24 hours{data ? ` · ${nf.format(data.total)} total` : ""}</CardDescription>
       </CardHeader>
       <CardContent>
         {isPending ? (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-5 w-full" />
+          <div className="space-y-0.5">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-2 py-2.5">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-3 w-1/3" />
+                </div>
+                <Skeleton className="h-4 w-12" />
+              </div>
             ))}
           </div>
         ) : jobs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No jobs yet.</p>
+          <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+            <div className="flex size-10 items-center justify-center rounded-full bg-muted">
+              <Inbox className="size-5 text-muted-foreground" aria-hidden={true} />
+            </div>
+            <p className="text-sm text-muted-foreground">No jobs in the last 24 hours.</p>
+          </div>
         ) : (
-          <ul className="divide-y">
-            {jobs.map((j) => (
-              <li key={j.id} className="flex items-center gap-3 py-2 text-sm">
-                <Badge variant={stateVariant(j.state)}>{j.state}</Badge>
-                <span className="min-w-0 flex-1 truncate font-medium">{j.fileName ?? "—"}</span>
-                {j.youTubeUrl ? (
-                  <a className="shrink-0 text-primary underline" href={j.youTubeUrl} target="_blank" rel="noreferrer">
-                    link
-                  </a>
-                ) : j.error ? (
-                  <span className="max-w-[14rem] shrink-0 truncate text-destructive">{j.error}</span>
-                ) : null}
-              </li>
-            ))}
+          <ul className="-mx-2 space-y-0.5">
+            {jobs.map((j) => {
+              const channel = j.channelName ?? j.slackChannelId;
+              return (
+                <li
+                  key={j.id}
+                  className="flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50"
+                >
+                  <RecentStateBadge state={j.state} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium leading-tight">{j.fileName ?? "Untitled"}</p>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {channel ? (
+                        <span className="flex min-w-0 items-center gap-0.5">
+                          <Hash className="size-3 shrink-0" aria-hidden={true} />
+                          <span className="truncate">{channel}</span>
+                        </span>
+                      ) : null}
+                      {channel ? <span aria-hidden={true}>·</span> : null}
+                      <span className="shrink-0 tabular-nums">{relativeTime(j.createdAt)}</span>
+                    </div>
+                  </div>
+                  {j.youTubeUrl ? (
+                    <a
+                      className="flex shrink-0 items-center gap-1 text-sm text-primary hover:underline"
+                      href={j.youTubeUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <ExternalLink className="size-3.5" aria-hidden={true} />
+                      <span className="hidden sm:inline">Watch</span>
+                    </a>
+                  ) : j.error ? (
+                    <span className="max-w-[12rem] shrink-0 truncate text-xs text-destructive" title={j.error}>
+                      {j.error}
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>
