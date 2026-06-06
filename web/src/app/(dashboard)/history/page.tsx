@@ -170,7 +170,7 @@ export default function JobsPage() {
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Jobs</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">History</h2>
         <p className="text-sm text-muted-foreground">Upload queue + history.</p>
       </div>
 

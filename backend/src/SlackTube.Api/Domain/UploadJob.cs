@@ -40,6 +40,10 @@ public class UploadJob
     public long BytesTransferred { get; set; }
     public string? OriginalFileName { get; set; }
 
+    /// <summary>When the YouTube upload actually started (transition into <see cref="JobState.Uploading"/>).
+    /// Null until then. Used to report the upload start time and the upload→done duration in Slack.</summary>
+    public DateTimeOffset? UploadStartedAt { get; set; }
+
     // ---- YouTube result --------------------------------------------------------------
     public string? YouTubeVideoId { get; set; }
     public string? YouTubeUrl { get; set; }

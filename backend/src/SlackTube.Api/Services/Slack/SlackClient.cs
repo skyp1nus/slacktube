@@ -59,6 +59,17 @@ public sealed class SlackClient(
         return root is not null && root.Value.GetProperty("ok").GetBoolean();
     }
 
+    /// <summary>Pins a message in a channel (pins.add). Requires the <c>pins:write</c> scope — without it
+    /// Slack returns <c>missing_scope</c> (logged, non-fatal: the message stays posted, just unpinned).
+    /// <c>already_pinned</c> is treated as success.</summary>
+    public async Task<bool> PinMessageAsync(string botToken, string channel, string ts, CancellationToken ct = default)
+    {
+        var root = await CallAsync(botToken, "pins.add", new() { ["channel"] = channel, ["timestamp"] = ts }, ct);
+        if (root is null) return false;
+        if (root.Value.TryGetProperty("ok", out var ok) && ok.GetBoolean()) return true;
+        return root.Value.TryGetProperty("error", out var er) && er.GetString() == "already_pinned";
+    }
+
     /// <summary>Lists the workspace channels the bot can see — public channels plus any PRIVATE
     /// channel the bot has been invited to (cursor-paginated).</summary>
     public async Task<IReadOnlyList<SlackChannelInfo>> ListChannelsAsync(string botToken, CancellationToken ct = default)

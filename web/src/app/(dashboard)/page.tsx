@@ -212,7 +212,7 @@ function RecentJobsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent jobs</CardTitle>
+        <CardTitle>Recent Actions</CardTitle>
         <CardDescription>Last 24 hours{data ? ` · ${nf.format(data.total)} total` : ""}</CardDescription>
       </CardHeader>
       <CardContent>

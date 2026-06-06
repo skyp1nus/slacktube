@@ -191,7 +191,7 @@ function PrerequisiteHint({ noChannels, noAccounts }: { noChannels: boolean; noA
         )}
         {noAccounts && (
           <Button asChild variant="outline" size="sm">
-            <a href="/accounts">Connect Google</a>
+            <a href="/youtube-account">Connect Google</a>
           </Button>
         )}
       </div>

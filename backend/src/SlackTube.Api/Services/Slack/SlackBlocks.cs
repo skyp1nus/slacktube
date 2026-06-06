@@ -1,3 +1,4 @@
+using System.Globalization;
 using SlackTube.Api.Domain;
 
 namespace SlackTube.Api.Services.Slack;
@@ -8,7 +9,9 @@ public sealed record ActiveJobView(
 
 public sealed record QueuedJobView(Guid Id, string FileName);
 
-public sealed record DoneJobView(string FileName, JobState State, string? YouTubeUrl, string? YouTubeVideoId, string? Error);
+public sealed record DoneJobView(
+    string FileName, JobState State, string? YouTubeUrl, string? YouTubeVideoId, string? Error,
+    DateTimeOffset? UploadStartedAt, DateTimeOffset CompletedAt);
 
 public sealed record StatusView(
     int RemainingUploads,
@@ -117,6 +120,26 @@ public static class SlackBlocks
         return (text, blocks);
     }
 
+    /// <summary>The copy-paste upload template posted (and pinned) in a channel when it is mapped, so
+    /// members always have the exact format to hand. The fenced block gives Slack a one-click copy button.
+    /// Posted by the bot, so the Events API skips it (bot_id) — it never triggers an upload itself.</summary>
+    public static string UploadTemplateText() =>
+        """
+        :pushpin: *Upload template for this channel*
+        Copy the block below, fill it in, and post it here to start an upload:
+
+        ```
+        🎬 UPLOAD
+
+        Video: https://drive.google.com/file/d/<FILE_ID>/view
+        Tags: tag1, tag2, tag3
+        Description:
+        Your text here — links and emoji are fine 🎉
+        ```
+
+        *Video* is required (a Google Drive link or file id). *Tags* and *Description* are optional; *Description* must come last.
+        """;
+
     // ---- primitives ------------------------------------------------------------------
     private static object Section(string mrkdwn) => new
     {
@@ -138,12 +161,35 @@ public static class SlackBlocks
             $":white_check_mark: *{Escape(d.FileName)}* — done → <{d.YouTubeUrl}|watch>"
             + (string.IsNullOrEmpty(d.YouTubeVideoId)
                 ? ""
-                : $" · <https://studio.youtube.com/video/{d.YouTubeVideoId}/edit|edit in Studio>"),
-        JobState.Done => $":white_check_mark: *{Escape(d.FileName)}* — done",
+                : $" · <https://studio.youtube.com/video/{d.YouTubeVideoId}/edit|edit in Studio>")
+            + Timing(d),
+        JobState.Done => $":white_check_mark: *{Escape(d.FileName)}* — done" + Timing(d),
         JobState.Cancelled => $":no_entry_sign: *{Escape(d.FileName)}* — cancelled",
         JobState.Blocked => $":lock: *{Escape(d.FileName)}* — blocked (daily quota reached)",
         _ => $":x: *{Escape(d.FileName)}* — failed{(string.IsNullOrEmpty(d.Error) ? "" : $": {Escape(d.Error!)}")}",
     };
+
+    /// <summary>For a finished upload, append when the YouTube upload started and how long it took
+    /// (upload → done). The start time renders in each viewer's own timezone via Slack's <c>&lt;!date&gt;</c>
+    /// token; empty when the job never reached the upload phase.</summary>
+    private static string Timing(DoneJobView d)
+    {
+        if (d.UploadStartedAt is not { } start) return "";
+        var unix = start.ToUnixTimeSeconds();
+        var fallback = start.UtcDateTime.ToString("MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture);
+        var started = $"<!date^{unix}^{{date_short_pretty}} {{time}}|{fallback}>";
+        var took = d.CompletedAt > start ? $" · took {Duration(d.CompletedAt - start)}" : "";
+        return $" · :stopwatch: started {started}{took}";
+    }
+
+    /// <summary>Humanizes a duration like "2m 13s" / "1h 4m" / "45s".</summary>
+    private static string Duration(TimeSpan span)
+    {
+        var total = (int)span.TotalSeconds;
+        if (total >= 3600) return $"{total / 3600}h {total % 3600 / 60}m";
+        if (total >= 60) return $"{total / 60}m {total % 60}s";
+        return $"{total}s";
+    }
 
     private static string Bar(int percent)
     {

@@ -164,6 +164,7 @@ public sealed class UploadJobHandler(
             await jobs.TransitionAsync(job, JobState.Uploading, "upload started", ct);
             job.GoogleAccountId = chosen.AccountId; // record which project/account actually uploaded
             job.QuotaUnitsCharged = reservedUnits;
+            job.UploadStartedAt = DateTimeOffset.UtcNow; // for the upload start time + upload→done duration in Slack
             await jobs.SaveAsync(job, ct);
             progress.Set(job.Id, new JobProgress(JobState.Uploading, 0, job.BytesTotal, PhaseUpload));
             await status.UpdateProgressAsync(job.Id);

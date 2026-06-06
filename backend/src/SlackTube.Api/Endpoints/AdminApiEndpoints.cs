@@ -174,11 +174,22 @@ public static class AdminApiEndpoints
         admin.MapGet("/mappings", async (ChannelMappingService mappings, CancellationToken ct) =>
             Results.Ok(await mappings.ListAsync(ct)));
 
-        admin.MapPost("/mappings", async (CreateMappingDto dto, ChannelMappingService mappings, ISlackStatusService status, CancellationToken ct) =>
+        admin.MapPost("/mappings", async (
+            CreateMappingDto dto, ChannelMappingService mappings, ISlackStatusService status,
+            SlackClient slack, SlackWorkspaceService workspaces, CancellationToken ct) =>
         {
             var (ok, error) = await mappings.CreateAsync(dto.SlackWorkspaceId, dto.SlackChannelId, dto.GoogleAccountId, ct);
             if (!ok) return Results.Conflict(new { error });
-            await status.RefreshQueueAsync(ct); // post the status message in the newly mapped channel
+            await status.RefreshQueueAsync(ct); // post the live status message in the newly mapped channel
+
+            // Post the copy-paste upload template as its own message and pin it so channel members always
+            // have the exact format handy. Pinning needs the pins:write scope (non-fatal without it).
+            var botToken = await workspaces.GetBotTokenForChannelAsync(dto.SlackChannelId, ct);
+            if (botToken is not null)
+            {
+                var ts = await slack.PostMessageAsync(botToken, dto.SlackChannelId, SlackBlocks.UploadTemplateText(), ct: ct);
+                if (ts is not null) await slack.PinMessageAsync(botToken, dto.SlackChannelId, ts, ct);
+            }
             return Results.Ok(new { created = true });
         });
 

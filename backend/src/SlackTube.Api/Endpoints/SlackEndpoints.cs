@@ -18,7 +18,7 @@ public static class SlackEndpoints
     // (channels:history/groups:history) + post the live status (chat:write). The bot only sees a
     // private channel after it's invited to it (/invite @bot) — Slack can't auto-join private channels.
     private const string InstallScopes =
-        "chat:write,channels:read,channels:history,groups:read,groups:history";
+        "chat:write,channels:read,channels:history,groups:read,groups:history,pins:write";
 
     public static void MapSlackEndpoints(this WebApplication app)
     {
