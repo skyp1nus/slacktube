@@ -14,10 +14,11 @@ namespace SlackTube.Api.Endpoints;
 public static class SlackEndpoints
 {
     private const string StateCookie = "slack_oauth_state";
-    // Public channels only: read the list (channels:read) + the message text (channels:history)
-    // + post the live status (chat:write). Add groups:read/groups:history to support private channels.
+    // Public + private channels: read the list (channels:read/groups:read) + the message text
+    // (channels:history/groups:history) + post the live status (chat:write). The bot only sees a
+    // private channel after it's invited to it (/invite @bot) — Slack can't auto-join private channels.
     private const string InstallScopes =
-        "chat:write,channels:read,channels:history";
+        "chat:write,channels:read,channels:history,groups:read,groups:history";
 
     public static void MapSlackEndpoints(this WebApplication app)
     {
