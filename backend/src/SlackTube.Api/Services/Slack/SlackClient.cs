@@ -67,15 +67,18 @@ public sealed class SlackClient(
         string? cursor = null;
         do
         {
-            var payload = new Dictionary<string, object?>
+            // conversations.list reads its params from the FORM/query string, NOT a JSON body. Sent as
+            // JSON, `types` is silently dropped and Slack falls back to public_channel only — so private
+            // channels never come back regardless of scopes/membership. Always call it form-encoded.
+            var form = new Dictionary<string, string>
             {
                 ["types"] = "public_channel,private_channel",
-                ["exclude_archived"] = true,
-                ["limit"] = 200,
+                ["exclude_archived"] = "true",
+                ["limit"] = "200",
             };
-            if (!string.IsNullOrEmpty(cursor)) payload["cursor"] = cursor;
+            if (!string.IsNullOrEmpty(cursor)) form["cursor"] = cursor;
 
-            var root = await CallAsync(botToken, "conversations.list", payload, ct);
+            var root = await CallFormAsync(botToken, "conversations.list", form, ct);
             if (root is null || !root.Value.GetProperty("ok").GetBoolean()) break;
 
             if (root.Value.TryGetProperty("channels", out var channels))
@@ -157,6 +160,49 @@ public sealed class SlackClient(
             using var req = new HttpRequestMessage(HttpMethod.Post, ApiBase + method)
             {
                 Content = JsonContent.Create(payload, options: JsonOpts),
+            };
+            req.Headers.Authorization = new("Bearer", botToken);
+
+            using var res = await http.SendAsync(req, ct);
+            if (res.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                var wait = res.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
+                logger.LogWarning("Slack {Method} rate-limited; waiting {Wait}s", method, wait.TotalSeconds);
+                await Task.Delay(wait, ct);
+                continue;
+            }
+
+            var body = await res.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
+            {
+                logger.LogWarning("Slack {Method} returned error: {Error}", method,
+                    root.TryGetProperty("error", out var er) ? er.GetString() : "unknown");
+            }
+            return root.Clone();
+        }
+
+        return null;
+    }
+
+    // ---- core call (FORM-encoded) for read methods whose params Slack reads only from the form/query.
+    // conversations.list `types` is the case in point — a JSON body silently drops it. 429-retry mirrors
+    // CallAsync. Messaging methods (chat.postMessage with blocks) stay on the JSON CallAsync.
+    private async Task<JsonElement?> CallFormAsync(
+        string botToken, string method, Dictionary<string, string> form, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(botToken))
+        {
+            logger.LogWarning("No Slack bot token available — skipping {Method}", method);
+            return null;
+        }
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, ApiBase + method)
+            {
+                Content = new FormUrlEncodedContent(form),
             };
             req.Headers.Authorization = new("Bearer", botToken);
 
