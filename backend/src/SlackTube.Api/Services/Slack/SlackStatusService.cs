@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using StackExchange.Redis;
 using SlackTube.Api.Domain;
+using SlackTube.Api.Services.Google;
 using SlackTube.Api.Services.Jobs;
 
 namespace SlackTube.Api.Services.Slack;
@@ -110,10 +111,24 @@ public sealed class SlackStatusService(
     {
         var jobs = sp.GetRequiredService<IJobService>();
         var quotaSvc = sp.GetRequiredService<IQuotaService>();
+        var google = sp.GetRequiredService<GoogleOAuthService>();
         var progress = sp.GetRequiredService<IProgressTracker>();
 
         var snap = await jobs.GetStatusSnapshotAsync(channelId, 5, ct);
-        var quota = await quotaSvc.GetStatusAsync(accountId);
+
+        // Quota is keyed by OAuth CLIENT (Cloud project) and one YouTube channel can be consented through a
+        // POOL of clients (each its own daily cap ⇒ N× quota), which is exactly what upload rotation uses.
+        // So aggregate the pool. The old code read GetStatusAsync(accountId): the GoogleAccount id is never
+        // a quota key (uploads charge the CLIENT id), so it always reported the full cap and never moved.
+        var effectiveAccountId = accountId ?? await google.GetDefaultAccountIdAsync(ct);
+        string? channelTitle = null;
+        IReadOnlyList<Guid> clientIds = Array.Empty<Guid>();
+        if (effectiveAccountId is { } accId)
+        {
+            channelTitle = await google.GetAccountChannelLabelAsync(accId, ct);
+            clientIds = await google.GetChannelOAuthClientIdsAsync(accId, ct);
+        }
+        var (remainingUploads, totalUploads) = await AggregateQuotaAsync(clientIds, quotaSvc);
 
         ActiveJobView? active = null;
         if (snap.Active is { } a)
@@ -133,7 +148,23 @@ public sealed class SlackStatusService(
             .Select(d => new DoneJobView(DisplayName(d), d.State, d.YouTubeUrl, d.YouTubeVideoId, d.ErrorMessage))
             .ToList();
 
-        return new StatusView(quota.RemainingUploads, quota.TotalUploads, active, queued, recent);
+        return new StatusView(remainingUploads, totalUploads, active, queued, recent, snap.UploadedLast24h, channelTitle);
+    }
+
+    /// <summary>Sum a channel's per-client daily quota into one remaining/total uploads pair. Each id is a
+    /// separate Cloud-project counter; the list is already distinct. Static so it's unit-testable with a
+    /// fake quota service (no Redis).</summary>
+    internal static async Task<(int RemainingUploads, int TotalUploads)> AggregateQuotaAsync(
+        IReadOnlyList<Guid> oauthClientIds, IQuotaService quota)
+    {
+        int remaining = 0, total = 0;
+        foreach (var id in oauthClientIds)
+        {
+            var qs = await quota.GetStatusAsync(id);
+            remaining += qs.RemainingUploads;
+            total += qs.TotalUploads;
+        }
+        return (remaining, total);
     }
 
     private static string StatusTsKey(string channelId) => $"slacktube:status:ts:{channelId}";

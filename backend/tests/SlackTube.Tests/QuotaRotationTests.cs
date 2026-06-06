@@ -3,6 +3,7 @@ using SlackTube.Api.Configuration;
 using SlackTube.Api.Services.Google;
 using SlackTube.Api.Services.Infrastructure;
 using SlackTube.Api.Services.Jobs;
+using SlackTube.Api.Services.Slack;
 using Xunit;
 
 namespace SlackTube.Tests;
@@ -100,6 +101,31 @@ public class QuotaRotationTests
         var chosen = await UploadJobHandler.ReserveAcrossCandidatesAsync(candidates, quota);
 
         Assert.Null(chosen);
+    }
+
+    [Fact]
+    public async Task StatusAggregatesPoolQuotaAcrossClients()
+    {
+        // A channel rotates across TWO Cloud projects ⇒ the header should show the SUMMED daily cap, and
+        // it must reflect units already charged to a client (the bug: it read an id that's never charged).
+        var clientA = Guid.NewGuid();
+        var clientB = Guid.NewGuid();
+        var quota = new FakeQuota(cap: 10000, cost: 1600,           // 6 uploads per client ⇒ 12 total
+            used: new Dictionary<Guid, int> { [clientA] = 6400, [clientB] = 0 }); // A spent 4 ⇒ 2 left
+
+        var (remaining, total) = await SlackStatusService.AggregateQuotaAsync(new[] { clientA, clientB }, quota);
+
+        Assert.Equal(8, remaining); // 2 (A) + 6 (B)
+        Assert.Equal(12, total);    // 6 + 6
+    }
+
+    [Fact]
+    public async Task StatusAggregateEmptyPoolIsZero()
+    {
+        var quota = new FakeQuota(cap: 10000, cost: 1600);
+        var (remaining, total) = await SlackStatusService.AggregateQuotaAsync(Array.Empty<Guid>(), quota);
+        Assert.Equal(0, remaining);
+        Assert.Equal(0, total);
     }
 
     private static GoogleUploadCreds Creds(Guid clientId) =>

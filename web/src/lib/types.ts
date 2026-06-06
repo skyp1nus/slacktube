@@ -93,12 +93,22 @@ export type JobDto = {
   youTubeUrl: string | null;
   error: string | null;
   tags: string[];
+  slackChannelId: string;
+  channelName: string | null;
   googleAccountId: string | null;
+  googleAccountLabel: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 export type JobsResponse = { items: JobDto[]; total: number };
+
+/** Facet options for the Jobs filter bar — only values that actually appear in jobs. */
+export type JobFilterOptions = {
+  channels: { id: string; name: string }[];
+  tags: string[];
+  accounts: { id: string; label: string }[];
+};
 
 /** Aggregate admin dashboard KPIs (GET /api/admin/dashboard). */
 export type DashboardStats = {

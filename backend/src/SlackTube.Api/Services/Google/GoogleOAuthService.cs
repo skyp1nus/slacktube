@@ -155,6 +155,41 @@ public sealed class GoogleOAuthService(
         return result;
     }
 
+    /// <summary>
+    /// The DISTINCT Active OAuth clients (Cloud projects) backing the same YouTube channel as
+    /// <paramref name="targetAccountId"/> — i.e. the rotation pool's per-project quota counters. Mirrors
+    /// <see cref="GetUploadCandidatesForChannelAsync"/>'s selection but returns only client ids (no
+    /// secrets decrypted) so callers can aggregate the pool's daily quota. Empty when the account is gone.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> GetChannelOAuthClientIdsAsync(
+        Guid targetAccountId, CancellationToken ct = default)
+    {
+        var target = await db.GoogleAccounts.AsNoTracking()
+            .Where(a => a.Id == targetAccountId)
+            .Select(a => new { a.YouTubeChannelId })
+            .FirstOrDefaultAsync(ct);
+        if (target is null) return Array.Empty<Guid>();
+
+        var accounts = db.GoogleAccounts.AsNoTracking().Where(a => a.Status == "Active");
+        accounts = string.IsNullOrEmpty(target.YouTubeChannelId)
+            ? accounts.Where(a => a.Id == targetAccountId)
+            : accounts.Where(a => a.YouTubeChannelId == target.YouTubeChannelId);
+
+        return await accounts
+            .Join(db.GoogleOAuthClients.AsNoTracking().Where(c => c.Status == GoogleOAuthClientService.StatusActive),
+                  a => a.OAuthClientId, c => c.Id, (a, c) => c.Id)
+            .Distinct()
+            .ToListAsync(ct);
+    }
+
+    /// <summary>Display name of the YouTube channel an account targets (its channel title, falling back to
+    /// the account label) — shown in the per-channel Slack status so the operator sees which channel it is.</summary>
+    public Task<string?> GetAccountChannelLabelAsync(Guid accountId, CancellationToken ct = default) =>
+        db.GoogleAccounts.AsNoTracking()
+            .Where(a => a.Id == accountId)
+            .Select(a => a.YouTubeChannelTitle ?? a.Label)
+            .FirstOrDefaultAsync(ct);
+
     /// <summary>Flags an account as broken (revoked / wrong client) so rotation skips it; surfaced in the UI.</summary>
     public async Task MarkAccountErrorAsync(Guid accountId, CancellationToken ct = default)
     {

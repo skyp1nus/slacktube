@@ -122,6 +122,73 @@ public class GoogleClientBindingTests
     }
 
     [Fact]
+    public async Task ClientIdsCoverActivePoolAndSkipDisabledAndOtherChannels()
+    {
+        // The quota-header read path must select the SAME pool as upload rotation: active clients on the
+        // channel, excluding disabled clients and other channels. (Mirrors CandidatesSkip… but id-only.)
+        using var db = NewDb();
+        var protector = NewProtector();
+        var clientsSvc = new GoogleOAuthClientService(db, protector);
+        var oauth = NewOauth(db, protector, clientsSvc);
+
+        var clientA = await clientsSvc.CreateAsync("A", "cid-A", "sec");
+        var clientB = await clientsSvc.CreateAsync("B", "cid-B", "sec");
+        var disabled = await clientsSvc.CreateAsync("Disabled", "cid-dis", "sec");
+        await clientsSvc.UpdateAsync(disabled.Id, label: null, status: "Disabled");
+
+        var target = AddAccount(db, protector, clientA.Id, channel: "CHAN", token: "t1");
+        AddAccount(db, protector, clientB.Id, channel: "CHAN", token: "t2");       // sibling project → included
+        AddAccount(db, protector, disabled.Id, channel: "CHAN", token: "t3");      // disabled client → excluded
+        AddAccount(db, protector, clientA.Id, channel: "OTHER", token: "t4");      // other channel → excluded
+        await db.SaveChangesAsync();
+
+        var ids = await oauth.GetChannelOAuthClientIdsAsync(target.Id);
+
+        Assert.Equal(new HashSet<Guid> { clientA.Id, clientB.Id }, ids.ToHashSet());
+    }
+
+    [Fact]
+    public async Task ClientIdsCollapseAccountsSharingOneClient()
+    {
+        // Two accounts on the same channel bound to the SAME client = ONE quota counter. Distinct must
+        // collapse them so AggregateQuotaAsync doesn't double-count that project's daily cap.
+        using var db = NewDb();
+        var protector = NewProtector();
+        var clientsSvc = new GoogleOAuthClientService(db, protector);
+        var oauth = NewOauth(db, protector, clientsSvc);
+
+        var client = await clientsSvc.CreateAsync("A", "cid-A", "sec");
+        var target = AddAccount(db, protector, client.Id, channel: "CHAN", token: "t1");
+        AddAccount(db, protector, client.Id, channel: "CHAN", token: "t2");
+        await db.SaveChangesAsync();
+
+        var ids = await oauth.GetChannelOAuthClientIdsAsync(target.Id);
+
+        Assert.Equal(new[] { client.Id }, ids);
+    }
+
+    [Fact]
+    public async Task ClientIdsFallBackToTargetWhenNoChannel()
+    {
+        // No YouTubeChannelId on the target ⇒ pool is just the target account's own client (mirrors
+        // GetUploadCandidatesForChannelAsync's fallback), never every channel-less account.
+        using var db = NewDb();
+        var protector = NewProtector();
+        var clientsSvc = new GoogleOAuthClientService(db, protector);
+        var oauth = NewOauth(db, protector, clientsSvc);
+
+        var clientA = await clientsSvc.CreateAsync("A", "cid-A", "sec");
+        var clientB = await clientsSvc.CreateAsync("B", "cid-B", "sec");
+        var target = AddAccount(db, protector, clientA.Id, channel: "", token: "t1");
+        AddAccount(db, protector, clientB.Id, channel: "", token: "t2"); // another channel-less account → excluded
+        await db.SaveChangesAsync();
+
+        var ids = await oauth.GetChannelOAuthClientIdsAsync(target.Id);
+
+        Assert.Equal(new[] { clientA.Id }, ids);
+    }
+
+    [Fact]
     public async Task AccountCredsResolveToIssuingClient()
     {
         using var db = NewDb();

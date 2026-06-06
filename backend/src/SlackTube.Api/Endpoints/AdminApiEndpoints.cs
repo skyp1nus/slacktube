@@ -214,27 +214,45 @@ public static class AdminApiEndpoints
 
         // ---- Job history (filtered + paginated) -----------------------------------------
         admin.MapGet("/jobs", async (
-            IJobService jobs, string? status, int? page, int? pageSize, CancellationToken ct) =>
+            IJobService jobs, string? status, string? channel, string? tag, Guid? account,
+            DateTimeOffset? from, DateTimeOffset? to, string? search,
+            int? page, int? pageSize, CancellationToken ct) =>
         {
             JobState? state = Enum.TryParse<JobState>(status, ignoreCase: true, out var s) ? s : null;
             var pageNum = Math.Max(1, page ?? 1);
             var size = Math.Clamp(pageSize ?? 20, 1, 100);
-            var (items, total) = await jobs.GetHistoryPagedAsync(state, pageNum, size, ct);
+            var filter = new JobHistoryFilter(state, channel, tag, account, from, to, search);
+            var (items, total) = await jobs.GetHistoryPagedAsync(filter, pageNum, size, ct);
             return Results.Ok(new
             {
                 total,
-                items = items.Select(j => new
+                items = items.Select(x => new
                 {
-                    j.Id,
-                    fileName = j.OriginalFileName ?? j.Title,
-                    state = j.State.ToString(),
-                    j.YouTubeUrl,
-                    error = j.ErrorMessage,
-                    tags = j.Tags,
-                    j.GoogleAccountId,
-                    j.CreatedAt,
-                    j.UpdatedAt,
+                    x.Job.Id,
+                    fileName = x.Job.OriginalFileName ?? x.Job.Title,
+                    state = x.Job.State.ToString(),
+                    x.Job.YouTubeUrl,
+                    error = x.Job.ErrorMessage,
+                    tags = x.Job.Tags,
+                    x.Job.SlackChannelId,
+                    channelName = x.ChannelName,
+                    x.Job.GoogleAccountId,
+                    googleAccountLabel = x.GoogleAccountLabel,
+                    x.Job.CreatedAt,
+                    x.Job.UpdatedAt,
                 }),
+            });
+        });
+
+        // Facet options for the filter UI — only values that actually occur in the jobs table.
+        admin.MapGet("/jobs/filters", async (IJobService jobs, CancellationToken ct) =>
+        {
+            var opts = await jobs.GetJobFilterOptionsAsync(ct);
+            return Results.Ok(new
+            {
+                channels = opts.Channels.Select(c => new { c.Id, c.Name }),
+                tags = opts.Tags,
+                accounts = opts.Accounts.Select(a => new { a.Id, a.Label }),
             });
         });
     }
