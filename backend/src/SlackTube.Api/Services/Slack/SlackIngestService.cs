@@ -44,8 +44,8 @@ public sealed class SlackIngestService(
             return;
         }
 
-        var refreshToken = await oauth.GetRefreshTokenAsync(mapping.GoogleAccountId, ct);
-        if (refreshToken is null)
+        var creds = await oauth.GetAccountCredsAsync(mapping.GoogleAccountId, ct);
+        if (creds is null)
         {
             await ReplyAsync(msg, ":warning: The mapped Google account is unavailable — reconnect it in the admin panel.", ct);
             return;
@@ -55,7 +55,7 @@ public sealed class SlackIngestService(
         DriveFileInfo info;
         try
         {
-            info = await drive.GetInfoAsync(drive.BuildService(refreshToken), parsed.DriveFileId!, ct);
+            info = await drive.GetInfoAsync(drive.BuildService(creds.ClientId, creds.ClientSecret, creds.RefreshToken), parsed.DriveFileId!, ct);
         }
         catch (Exception ex)
         {

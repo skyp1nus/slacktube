@@ -3,17 +3,20 @@ using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Drive.v3;
 using Google.Apis.YouTube.v3;
-using Microsoft.Extensions.Options;
-using SlackTube.Api.Configuration;
 
 namespace SlackTube.Api.Services.Google;
 
 /// <summary>
-/// Builds the OAuth pieces. One consent covers both scopes. A <see cref="UserCredential"/>
-/// rebuilt from just the stored refresh token + client secrets auto-refreshes its access
-/// token on every API call (no browser, suitable for the background worker).
+/// Builds the OAuth pieces from an EXPLICIT client id + secret (one per Google Cloud project).
+/// One consent covers both scopes. A <see cref="UserCredential"/> rebuilt from the stored refresh
+/// token + its issuing client's secrets auto-refreshes its access token on every API call (no
+/// browser, suitable for the background worker).
+///
+/// HARD RULE: a refresh token can only be refreshed by the client that issued it — callers MUST
+/// pass the issuing client's creds (see <see cref="Domain.GoogleAccount.OAuthClientId"/>), never a
+/// different client's.
 /// </summary>
-public sealed class GoogleCredentialFactory(IOptions<GoogleOptions> options)
+public sealed class GoogleCredentialFactory
 {
     public static readonly string[] Scopes =
     {
@@ -22,18 +25,15 @@ public sealed class GoogleCredentialFactory(IOptions<GoogleOptions> options)
         DriveService.ScopeConstants.DriveReadonly,   // drive.readonly
     };
 
-    public GoogleAuthorizationCodeFlow CreateFlow()
-    {
-        var o = options.Value;
-        return new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
+    public GoogleAuthorizationCodeFlow CreateFlow(string clientId, string clientSecret)
+        => new(new GoogleAuthorizationCodeFlow.Initializer
         {
-            ClientSecrets = new ClientSecrets { ClientId = o.ClientId, ClientSecret = o.ClientSecret },
+            ClientSecrets = new ClientSecrets { ClientId = clientId, ClientSecret = clientSecret },
             Scopes = Scopes,
             // AccessType defaults to "offline"; force consent so a refresh_token is always returned.
             Prompt = "consent",
         });
-    }
 
-    public UserCredential CreateUserCredential(string refreshToken)
-        => new(CreateFlow(), "user", new TokenResponse { RefreshToken = refreshToken });
+    public UserCredential CreateUserCredential(string clientId, string clientSecret, string refreshToken)
+        => new(CreateFlow(clientId, clientSecret), "user", new TokenResponse { RefreshToken = refreshToken });
 }

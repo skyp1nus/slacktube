@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, MonitorPlay } from "lucide-react";
+import { Boxes, CalendarDays, MonitorPlay } from "lucide-react";
 
 import type { GoogleAccountDto } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -48,6 +48,12 @@ export function AccountCard({ account }: { account: GoogleAccountDto }) {
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span className="font-mono">{account.youTubeChannelId ?? "channel id unknown"}</span>
+              {account.oAuthClientLabel && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Boxes className="size-3.5" aria-hidden="true" />
+                  {account.oAuthClientLabel}
+                </span>
+              )}
               <span className="inline-flex items-center gap-1.5">
                 <CalendarDays className="size-3.5" aria-hidden="true" />
                 Connected {dateFormatter.format(new Date(account.createdAt))}
@@ -62,7 +68,7 @@ export function AccountCard({ account }: { account: GoogleAccountDto }) {
 
       <CardContent className="space-y-1.5 py-3">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Quota today (PT)</span>
+          <span className="text-muted-foreground">Project quota today (PT, shared)</span>
           <span className={cn("font-medium tabular-nums", percent >= 90 && "text-destructive")}>{percent}%</span>
         </div>
         <Progress

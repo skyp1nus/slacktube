@@ -35,7 +35,20 @@ export type QuotaDto = {
   totalUploads: number;
 };
 
-/** A connected Google/YouTube account with its per-account daily quota. */
+/** A YouTube/Google OAuth client = one Google Cloud project. Its daily quota is the real cap,
+ * shared by every account that consented through it. The client secret is write-only (never read). */
+export type GoogleOAuthClientDto = {
+  id: string;
+  label: string;
+  clientId: string;
+  status: string; // "Active" | "Disabled"
+  createdAt: string;
+  updatedAt: string;
+  accountCount: number;
+  quota: QuotaDto;
+};
+
+/** A connected Google/YouTube account. Its quota is the ISSUING client's shared daily cap. */
 export type GoogleAccountDto = {
   id: string;
   label: string;
@@ -45,6 +58,8 @@ export type GoogleAccountDto = {
   accountEmail: string | null;
   status: string;
   createdAt: string;
+  oAuthClientId: string | null;
+  oAuthClientLabel: string | null;
   quota: QuotaDto;
 };
 
@@ -89,6 +104,7 @@ export type JobsResponse = { items: JobDto[]; total: number };
 export type DashboardStats = {
   workspaceCount: number;
   accountCount: number;
+  clientCount?: number;
   uploadsToday: number;
   uploadsLast24h: number;
   errorsLast24h: number;

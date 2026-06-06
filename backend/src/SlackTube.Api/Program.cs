@@ -1,6 +1,7 @@
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
 using SlackTube.Api.Data;
 using SlackTube.Api.Domain;
@@ -65,6 +66,7 @@ builder.Services.AddSingleton<ISlackStatusService, SlackStatusService>();
 builder.Services.AddScoped<ISettingsStore, SettingsStore>();
 builder.Services.AddScoped<IJobService, JobService>();
 builder.Services.AddScoped<ChannelMappingService>();
+builder.Services.AddScoped<GoogleOAuthClientService>();
 builder.Services.AddScoped<GoogleOAuthService>();
 builder.Services.AddScoped<SlackWorkspaceService>();
 builder.Services.AddScoped<SlackIngestService>();
@@ -82,6 +84,64 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
+}
+
+// ---- seed the env OAuth client + backfill legacy accounts (backward compat) -----------
+// YouTube OAuth clients are now UI-managed (one per Cloud project). For a deploy that still
+// configures the single Google__ env client, seed it as "Default (env)" when none exist, then
+// bind every pre-existing account to it (their refresh tokens were issued by that client). Once
+// UI clients exist, GoogleOptions is just an inert seed/fallback.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+    var googleOpt = scope.ServiceProvider.GetRequiredService<IOptions<GoogleOptions>>().Value;
+    var log = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup.GoogleClientSeed");
+
+    var hasEnvCreds = !string.IsNullOrWhiteSpace(googleOpt.ClientId) && !string.IsNullOrWhiteSpace(googleOpt.ClientSecret);
+
+    // The env client is the issuer of EVERY pre-existing account, so it's the only client we may
+    // safely backfill orphans onto. Reuse an already-seeded one (matched by client id) or seed it
+    // when the table is still empty (the first boot on this version).
+    GoogleOAuthClient? envClient = null;
+    if (hasEnvCreds)
+    {
+        envClient = db.GoogleOAuthClients.FirstOrDefault(c => c.ClientId == googleOpt.ClientId);
+        if (envClient is null && !db.GoogleOAuthClients.Any())
+        {
+            var now = DateTimeOffset.UtcNow;
+            envClient = new GoogleOAuthClient
+            {
+                Label = "Default (env)",
+                ClientId = googleOpt.ClientId,
+                EncryptedClientSecret = protector.Protect(googleOpt.ClientSecret),
+                Status = "Active",
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            db.GoogleOAuthClients.Add(envClient);
+            db.SaveChanges();
+            log.LogInformation("Seeded default OAuth client {Id} from Google__ env config", envClient.Id);
+        }
+    }
+
+    var orphans = db.GoogleAccounts.Where(a => a.OAuthClientId == null).ToList();
+    if (orphans.Count > 0)
+    {
+        // Bind ONLY to the env client (the real issuer) — never to an arbitrary UI client, which
+        // could not refresh these tokens (hard constraint: token ↔ issuing client is permanent).
+        if (envClient is not null)
+        {
+            var now = DateTimeOffset.UtcNow;
+            foreach (var a in orphans) { a.OAuthClientId = envClient.Id; a.UpdatedAt = now; }
+            db.SaveChanges();
+            log.LogInformation("Backfilled {Count} Google account(s) onto env OAuth client {Client}", orphans.Count, envClient.Id);
+        }
+        else
+        {
+            log.LogWarning("{Count} Google account(s) have no OAuth client — set Google__ClientId/Secret to their original (issuing) client to migrate them, or reconnect the accounts.", orphans.Count);
+        }
+    }
 }
 
 // ---- recover jobs interrupted by a restart -------------------------------------------
