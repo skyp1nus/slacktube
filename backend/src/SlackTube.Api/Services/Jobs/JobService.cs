@@ -139,8 +139,12 @@ public sealed class JobService(AppDbContext db) : IJobService
             .OrderBy(j => j.CreatedAt)
             .ToListAsync(ct);
 
+        // Recent finished jobs, capped at recentCount AND bounded to the last 24h so the status list
+        // self-prunes — items older than a day drop off instead of lingering forever as the top-N.
+        var dayAgo = DateTimeOffset.UtcNow.AddHours(-24);
         var recent = await db.Jobs.AsNoTracking()
             .Where(j => j.SlackChannelId == slackChannelId
+                     && j.UpdatedAt >= dayAgo
                      && (j.State == JobState.Done
                       || j.State == JobState.Cancelled
                       || j.State == JobState.Failed
@@ -151,7 +155,6 @@ public sealed class JobService(AppDbContext db) : IJobService
 
         // Uploads completed in this channel over the rolling last 24h (UpdatedAt of a Done job = when it
         // finished). Surfaced in the status header so a channel sees its recent throughput at a glance.
-        var dayAgo = DateTimeOffset.UtcNow.AddHours(-24);
         var uploadedLast24h = await db.Jobs.AsNoTracking()
             .CountAsync(j => j.SlackChannelId == slackChannelId
                           && j.State == JobState.Done
