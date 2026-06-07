@@ -145,7 +145,7 @@ public sealed class SlackStatusService(
 
         var queued = snap.Queued.Select(q => new QueuedJobView(q.Id, DisplayName(q))).ToList();
         var recent = snap.Recent
-            .Select(d => new DoneJobView(DisplayName(d), d.State, d.YouTubeUrl, d.YouTubeVideoId, d.ErrorMessage, d.UploadStartedAt, d.UpdatedAt))
+            .Select(d => new DoneJobView(DisplayName(d), d.State, d.YouTubeUrl, d.YouTubeVideoId, d.ErrorMessage, d.DownloadStartedAt, d.UploadStartedAt, d.UpdatedAt))
             .ToList();
 
         return new StatusView(remainingUploads, totalUploads, active, queued, recent, snap.UploadedLast24h, channelTitle);
