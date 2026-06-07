@@ -9,6 +9,7 @@ import {
   Boxes,
   Link2,
   ScrollText,
+  Activity,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -24,10 +25,11 @@ type NavItem = {
 const navItems: NavItem[] = [
   { title: "Dashboard", href: "/", icon: LayoutDashboard },
   { title: "Slack", href: "/slack", icon: Hash },
-  { title: "Accounts", href: "/accounts", icon: MonitorPlay },
+  { title: "YouTube Account", href: "/youtube-account", icon: MonitorPlay },
   { title: "Projects", href: "/projects", icon: Boxes },
   { title: "Mapping", href: "/mapping", icon: Link2 },
-  { title: "Jobs", href: "/jobs", icon: ScrollText },
+  { title: "History", href: "/history", icon: ScrollText },
+  { title: "API Usage", href: "/usage", icon: Activity },
   { title: "Settings", href: "/settings", icon: Settings },
 ];
 

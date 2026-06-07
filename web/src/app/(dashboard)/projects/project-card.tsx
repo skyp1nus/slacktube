@@ -51,8 +51,9 @@ function maskClientId(clientId: string): string {
 
 export function ProjectCard({ client }: { client: GoogleOAuthClientDto }) {
   const update = useUpdateGoogleClient();
-  const { usedUnits, capUnits, remainingUploads, totalUploads } = client.quota;
-  const percent = usagePercent(usedUnits, capUnits);
+  const { usedUploads, uploadLimit, remainingUploads, totalUploads, usedUnits, capUnits } = client.quota;
+  // The videos.insert daily bucket is the real cap — drive the bar off uploads, not the unit pool.
+  const percent = usagePercent(usedUploads, uploadLimit);
   const active = client.status === "Active";
   const referenced = client.accountCount > 0;
 
@@ -106,16 +107,16 @@ export function ProjectCard({ client }: { client: GoogleOAuthClientDto }) {
 
       <CardContent className="space-y-1.5 py-3">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Quota today (PT)</span>
+          <span className="text-muted-foreground">Uploads today (PT)</span>
           <span className={cn("font-medium tabular-nums", percent >= 90 && "text-destructive")}>{percent}%</span>
         </div>
         <Progress value={percent} className={cn(percent >= 90 && "[&>[data-slot=progress-indicator]]:bg-destructive")} />
         <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
           <span>
-            {nf.format(usedUnits)} / {nf.format(capUnits)} units
-          </span>
-          <span>
             {remainingUploads} of {totalUploads} uploads left today
+          </span>
+          <span title="Separate ~10k/day pool for non-upload API calls (list/search)">
+            {nf.format(usedUnits)} / {nf.format(capUnits)} units
           </span>
         </div>
       </CardContent>

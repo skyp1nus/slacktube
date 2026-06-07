@@ -99,12 +99,13 @@ function KpiCard({
 }
 
 function QuotaCard({ stats, isLoading }: { stats: DashboardStats | undefined; isLoading: boolean }) {
-  const percent = stats ? clampPercent(stats.quotaUsedUnits, stats.quotaCapUnits) : 0;
+  // Uploads (videos.insert daily bucket) are the real gate; the unit pool is shown as a secondary meter.
+  const percent = stats ? clampPercent(stats.quotaUploadsUsed, stats.quotaUploadCap) : 0;
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-sm font-medium text-muted-foreground">Quota used (PT)</CardTitle>
+        <CardTitle className="text-sm font-medium text-muted-foreground">Uploads quota (PT)</CardTitle>
         <Gauge className="size-4 text-muted-foreground" aria-hidden={true} />
       </CardHeader>
       <CardContent className="space-y-2">
@@ -119,6 +120,9 @@ function QuotaCard({ stats, isLoading }: { stats: DashboardStats | undefined; is
             <span className={cn("text-2xl font-semibold tracking-tight", percent >= 90 && "text-destructive")}>{percent}%</span>
             <Progress value={percent} className={cn(percent >= 90 && "[&>[data-slot=progress-indicator]]:bg-destructive")} />
             <p className="text-xs text-muted-foreground tabular-nums">
+              {nf.format(stats.quotaUploadsUsed)} / {nf.format(stats.quotaUploadCap)} uploads
+            </p>
+            <p className="text-xs text-muted-foreground tabular-nums" title="Separate ~10k/day pool for non-upload API calls (list/search)">
               {nf.format(stats.quotaUsedUnits)} / {nf.format(stats.quotaCapUnits)} units
             </p>
           </>
@@ -212,7 +216,7 @@ function RecentJobsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent jobs</CardTitle>
+        <CardTitle>Recent Actions</CardTitle>
         <CardDescription>Last 24 hours{data ? ` · ${nf.format(data.total)} total` : ""}</CardDescription>
       </CardHeader>
       <CardContent>

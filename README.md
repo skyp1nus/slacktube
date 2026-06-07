@@ -150,7 +150,8 @@ Useful endpoints: `GET /health`, Hangfire dashboard at `/hangfire` (local-reques
 | `App__PublicBaseUrl` | Public URL of the backend (for OAuth redirect/links) |
 | `App__AdminPanelUrl` | Web panel origin — OAuth callbacks bounce the browser back here |
 | `App__TempDownloadDir` | Where Drive files are streamed before upload (cleaned up after each job) |
-| `App__YouTubeDailyQuotaUnits` / `App__YouTubeUploadCostUnits` | Quota cap (10000) / cost per upload (1600) → ~6/day |
+| `App__YouTubeDailyUploadLimit` | Per-project daily upload cap — `videos.insert` calls/PT-day (Google default **100**). The real upload gate. |
+| `App__YouTubeDailyQuotaUnits` | Informational non-upload unit pool (10000) for list/search etc. — uploads do **not** draw from it. |
 
 ---
 
@@ -191,10 +192,11 @@ each Slack channel to a Google account. The dashboard shows connection status + 
 
 ## 5. YouTube projects + Google accounts
 
-YouTube quota is enforced **per Google Cloud project (OAuth client)** — default ~6 uploads/day.
+YouTube enforces uploads **per Google Cloud project (OAuth client)** — `videos.insert` has its own
+daily bucket (default **~100 uploads/day**), separate from the ~10k-unit pool used by other endpoints.
 SlackTube manages a **pool of OAuth clients** (one per Cloud project) from the **Projects** tab;
-connecting the **same channel through several projects** stacks their quotas, and uploads
-**rotate** to the next project when one is exhausted (N projects ⇒ N×6 uploads/day to one channel).
+connecting the **same channel through several projects** stacks their buckets, and uploads
+**rotate** to the next project when one is exhausted (N projects ⇒ N×100 uploads/day to one channel).
 
 **Per Google Cloud project** (repeat for each project you want in the pool):
 
@@ -289,7 +291,9 @@ cd web && bun run build                      # type-check + production build
   values survive restarts/redeploys with no key-ring volume to mount. Changing the key makes
   previously stored secrets undecryptable.
 - **Quota reset** is implicit: the Redis counter key embeds the **Pacific-Time date**, so it
-  resets to 0 at PT midnight with no separate scheduler. Cost charged per upload = 1600 units.
+  resets to 0 at PT midnight with no separate scheduler. Each upload charges **1 `videos.insert`
+  call** against the project's daily upload bucket (cap = `YouTubeDailyUploadLimit`, default 100);
+  the ~10k unit pool is a separate informational meter that uploads do not consume.
 - **No duplicate uploads:** the worker disables Hangfire auto-retry (`Attempts = 0`). A job
   interrupted *after* the upload started is marked Failed with a “verify in YouTube Studio”
   note instead of being retried. Crashes before upload can be re-posted to retry. State lives

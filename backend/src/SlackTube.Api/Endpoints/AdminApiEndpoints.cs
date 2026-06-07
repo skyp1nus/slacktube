@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
 using SlackTube.Api.Domain;
 using SlackTube.Api.Services.Google;
+using SlackTube.Api.Services.Infrastructure;
 using SlackTube.Api.Services.Jobs;
 using SlackTube.Api.Services.Settings;
 using SlackTube.Api.Services.Slack;
@@ -43,12 +44,13 @@ public static class AdminApiEndpoints
             var conn = await google.GetConnectionAsync(ct);
             var accountCount = await google.CountAccountsAsync(ct);
             // Quota is per OAuth client; aggregate across Active clients for the at-a-glance total.
-            int used = 0, cap = 0, remainingUploads = 0, totalUploads = 0;
+            int usedUnits = 0, capUnits = 0, usedUploads = 0, uploadLimit = 0, remainingUploads = 0, totalUploads = 0;
             foreach (var c in await clients.ListAsync(ct))
             {
                 if (c.Status != GoogleOAuthClientService.StatusActive) continue;
                 var qs = await quota.GetStatusAsync(c.Id);
-                used += qs.UsedUnits; cap += qs.CapUnits;
+                usedUnits += qs.UsedUnits; capUnits += qs.CapUnits;
+                usedUploads += qs.UsedUploads; uploadLimit += qs.UploadLimit;
                 remainingUploads += qs.RemainingUploads; totalUploads += qs.TotalUploads;
             }
             return Results.Ok(new
@@ -56,7 +58,7 @@ public static class AdminApiEndpoints
                 slackConfigured = wsCount > 0,
                 workspaceCount = wsCount,
                 google = new { conn.Connected, conn.Scopes, conn.ConnectedAt, accountCount },
-                quota = new { UsedUnits = used, CapUnits = cap, RemainingUploads = remainingUploads, TotalUploads = totalUploads },
+                quota = new { UsedUploads = usedUploads, UploadLimit = uploadLimit, RemainingUploads = remainingUploads, TotalUploads = totalUploads, UsedUnits = usedUnits, CapUnits = capUnits },
             });
         });
 
@@ -107,7 +109,7 @@ public static class AdminApiEndpoints
                 {
                     c.Id, c.Label, c.ClientId, c.Status, c.CreatedAt, c.UpdatedAt,
                     accountCount,
-                    quota = new { q.UsedUnits, q.CapUnits, q.RemainingUploads, q.TotalUploads },
+                    quota = new { q.UsedUploads, q.UploadLimit, q.RemainingUploads, q.TotalUploads, q.UsedUnits, q.CapUnits },
                 });
             }
             return Results.Ok(result);
@@ -153,7 +155,7 @@ public static class AdminApiEndpoints
                 {
                     a.Id, a.Label, a.YouTubeChannelId, a.YouTubeChannelTitle, a.AvatarUrl, a.AccountEmail, a.Status, a.CreatedAt,
                     a.OAuthClientId, a.OAuthClientLabel,
-                    quota = new { q.UsedUnits, q.CapUnits, q.RemainingUploads, q.TotalUploads },
+                    quota = new { q.UsedUploads, q.UploadLimit, q.RemainingUploads, q.TotalUploads, q.UsedUnits, q.CapUnits },
                 });
             }
             return Results.Ok(result);
@@ -174,11 +176,22 @@ public static class AdminApiEndpoints
         admin.MapGet("/mappings", async (ChannelMappingService mappings, CancellationToken ct) =>
             Results.Ok(await mappings.ListAsync(ct)));
 
-        admin.MapPost("/mappings", async (CreateMappingDto dto, ChannelMappingService mappings, ISlackStatusService status, CancellationToken ct) =>
+        admin.MapPost("/mappings", async (
+            CreateMappingDto dto, ChannelMappingService mappings, ISlackStatusService status,
+            SlackClient slack, SlackWorkspaceService workspaces, CancellationToken ct) =>
         {
             var (ok, error) = await mappings.CreateAsync(dto.SlackWorkspaceId, dto.SlackChannelId, dto.GoogleAccountId, ct);
             if (!ok) return Results.Conflict(new { error });
-            await status.RefreshQueueAsync(ct); // post the status message in the newly mapped channel
+            await status.RefreshQueueAsync(ct); // post the live status message in the newly mapped channel
+
+            // Post the copy-paste upload template as its own message and pin it so channel members always
+            // have the exact format handy. Pinning needs the pins:write scope (non-fatal without it).
+            var botToken = await workspaces.GetBotTokenForChannelAsync(dto.SlackChannelId, ct);
+            if (botToken is not null)
+            {
+                var ts = await slack.PostMessageAsync(botToken, dto.SlackChannelId, SlackBlocks.UploadTemplateText(), ct: ct);
+                if (ts is not null) await slack.PinMessageAsync(botToken, dto.SlackChannelId, ts, ct);
+            }
             return Results.Ok(new { created = true });
         });
 
@@ -192,12 +205,18 @@ public static class AdminApiEndpoints
         {
             var workspaceCount = await ws.CountActiveWorkspacesAsync(ct);
             var accountCount = await google.CountAccountsAsync(ct);
-            // Quota is per OAuth client (project): used = sum over clients, cap = per-project default × clients.
-            var capPer = appOpt.Value.YouTubeDailyQuotaUnits;
+            // Quota is per OAuth client (project). Uploads (the real daily gate) and the unit pool are
+            // SEPARATE buckets; aggregate both: used = sum over clients, cap = per-project default × clients.
+            var uploadCapPer = appOpt.Value.YouTubeDailyUploadLimit;
+            var unitCapPer = appOpt.Value.YouTubeDailyQuotaUnits;
             var clientList = await clients.ListAsync(ct);
-            var usedSum = 0;
+            int usedUploadsSum = 0, usedUnitsSum = 0;
             foreach (var c in clientList)
-                usedSum += (await quota.GetStatusAsync(c.Id)).UsedUnits;
+            {
+                var qs = await quota.GetStatusAsync(c.Id);
+                usedUploadsSum += qs.UsedUploads;
+                usedUnitsSum += qs.UsedUnits;
+            }
             var (uploadsToday, uploadsLast24h, errorsLast24h) = await jobs.GetDashboardCountsAsync(ct);
             return Results.Ok(new
             {
@@ -207,9 +226,25 @@ public static class AdminApiEndpoints
                 uploadsToday,
                 uploadsLast24h,
                 errorsLast24h,
-                quotaUsedUnits = usedSum,
-                quotaCapUnits = capPer * clientList.Count,
+                quotaUploadsUsed = usedUploadsSum,
+                quotaUploadCap = uploadCapPer * clientList.Count,
+                quotaUsedUnits = usedUnitsSum,
+                quotaCapUnits = unitCapPer * clientList.Count,
             });
+        });
+
+        // ---- API usage (daily spend across every external API we call) -------------------
+        admin.MapGet("/usage", async (
+            GoogleOAuthClientService clients, IQuotaService quota, IApiUsageService usage,
+            IOptions<AppOptions> appOpt, CancellationToken ct) =>
+        {
+            var clientList = await clients.ListAsync(ct);
+            var quotas = new List<ApiUsageReport.ClientQuota>(clientList.Count);
+            foreach (var c in clientList)
+                quotas.Add(new ApiUsageReport.ClientQuota(c.Id, c.Label, await quota.GetStatusAsync(c.Id)));
+            var entries = await usage.GetTodayAsync();
+            var report = ApiUsageReport.Build(PacificTime.TodayKey(), quotas, entries, appOpt.Value.DriveDailyQueryLimit);
+            return Results.Ok(report);
         });
 
         // ---- Job history (filtered + paginated) -----------------------------------------

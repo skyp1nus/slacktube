@@ -181,7 +181,8 @@ What to watch:
 - While **queued** or **downloading** a **✖ Cancel** button works; once the YouTube upload
   starts it’s the point of no return (cancel replies “remove manually in YouTube Studio”).
 - Panel → **Jobs** tab → the job appears with its state + YouTube URL; **Dashboard** counts
-  update; the account’s **quota** gauge ticks (≈1600 units/upload, ~6/day per OAuth client).
+  update; the account’s **Uploads** gauge ticks up by 1 per upload (cap ~100/day per OAuth client);
+  the separate units meter is unaffected by uploads.
 
 ---
 
@@ -195,7 +196,7 @@ What to watch:
 | Google **“no refresh token”** | You consented before. Revoke at https://myaccount.google.com/permissions and reconnect (the app forces `prompt=consent`). |
 | Google `redirect_uri_mismatch` | The redirect URI in the console must **exactly** equal `<PUBLIC_BASE_URL>/google/oauth/callback`. Add both localhost and tunnel variants. |
 | `access_denied` on Google consent | The account isn’t a **Test user** on the consent screen. Add it. |
-| Upload fails on quota | ~6 uploads/day per **OAuth client** (shared across accounts on the same client). Resets at Pacific-time midnight. |
+| Upload fails on quota | ~100 uploads/day per **OAuth client** (`videos.insert` daily bucket, shared across accounts on the same client). Resets at Pacific-time midnight. Add more projects to stack capacity. |
 | Changed `PUBLIC_BASE_URL`, browser still hits old URL | The web bundle is built-time baked — you must `up --build`, not just restart. |
 | ngrok URL changed after restart | Use an ngrok **static domain** (free tier has one) or a named cloudflared tunnel, then you won’t re-edit config + rebuild. |
 

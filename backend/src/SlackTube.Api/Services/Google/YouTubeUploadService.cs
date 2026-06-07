@@ -10,6 +10,7 @@ public sealed record YouTubeUploadResult(string VideoId, string Url);
 public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
 {
     private const int MaxTitleLength = 100;
+    private const int MaxDescriptionLength = 5000;
     private const string DefaultCategoryId = "22"; // People & Blogs
 
     public YouTubeService BuildService(string clientId, string clientSecret, string refreshToken) =>
@@ -19,7 +20,9 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             ApplicationName = "SlackTube",
         });
 
-    /// <summary>The authenticated account's own channel id + title + avatar (channels.list?mine=true, ~1 unit).</summary>
+    /// <summary>The authenticated account's own channel id + title + avatar (channels.list?mine=true, ~1 unit).
+    /// The single caller (<c>GoogleOAuthService.ExchangeAndStoreAsync</c>) meters this against the unit pool;
+    /// any new caller must charge <c>IQuotaService.ChargeUnitsAsync</c> too.</summary>
     public async Task<(string? Id, string? Title, string? AvatarUrl)> GetChannelInfoAsync(
         string clientId, string clientSecret, string refreshToken, CancellationToken ct = default)
     {
@@ -55,8 +58,8 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             Snippet = new VideoSnippet
             {
                 Title = NormalizeTitle(title),
-                Description = description ?? string.Empty,
-                Tags = tags.Count > 0 ? tags : null,
+                Description = NormalizeDescription(description),
+                Tags = NormalizeTags(tags),
                 CategoryId = DefaultCategoryId,
             },
             Status = new VideoStatus { PrivacyStatus = NormalizeVisibility(visibility) },
@@ -92,11 +95,51 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
         return new YouTubeUploadResult(videoId, $"https://youtu.be/{videoId}");
     }
 
-    private static string NormalizeTitle(string title)
+    // YouTube rejects any '<' or '>' in a title/description (invalidTitle / invalidDescription).
+    // Slack markup is already unwrapped upstream; these strips are the last-line guard and also
+    // sanitise jobs whose description was captured before that unwrap existed.
+    internal static string NormalizeTitle(string? title)
     {
         if (string.IsNullOrWhiteSpace(title)) return "Untitled upload";
-        title = title.Trim();
+        title = StripAngleBrackets(title).Trim();
+        if (title.Length == 0) return "Untitled upload";
         return title.Length <= MaxTitleLength ? title : title[..MaxTitleLength];
+    }
+
+    internal static string NormalizeDescription(string? description)
+    {
+        if (string.IsNullOrEmpty(description)) return string.Empty;
+        var d = StripAngleBrackets(description);
+        return d.Length <= MaxDescriptionLength ? d : d[..MaxDescriptionLength];
+    }
+
+    private static string StripAngleBrackets(string s) =>
+        s.Replace("<", string.Empty).Replace(">", string.Empty);
+
+    // YouTube returns invalidTags when a tag holds a '<'/'>' or when the tags' combined length
+    // exceeds ~500 chars. It serialises tags as an array and wraps any tag containing whitespace in
+    // double quotes — those quotes count toward the limit, so a spaced tag costs length + 2. We strip
+    // brackets, trim/dedupe, then keep tags until the quote-aware budget is spent. Margin under 500.
+    private const int MaxTagLength = 100;
+    private const int MaxTagsTotalChars = 480;
+
+    internal static IList<string>? NormalizeTags(IEnumerable<string>? tags)
+    {
+        if (tags is null) return null;
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var budget = 0;
+        foreach (var raw in tags)
+        {
+            var t = StripAngleBrackets(raw).Trim();
+            if (t.Length > MaxTagLength) t = t[..MaxTagLength].Trim();
+            if (t.Length == 0 || !seen.Add(t)) continue;
+            var cost = t.Length + (t.Any(char.IsWhiteSpace) ? 2 : 0);
+            if (budget + cost > MaxTagsTotalChars) break;
+            budget += cost;
+            result.Add(t);
+        }
+        return result.Count > 0 ? result : null;
     }
 
     /// <summary>Only YouTube's three privacy values are valid; anything else falls back to private.</summary>

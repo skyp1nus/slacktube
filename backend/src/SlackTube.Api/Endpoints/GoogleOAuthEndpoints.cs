@@ -20,14 +20,14 @@ public static class GoogleOAuthEndpoints
         {
             var panel = appOpt.Value.AdminPanelUrl.TrimEnd('/');
             if (clientId is null)
-                return Results.Redirect($"{panel}/accounts?error=missing_client");
+                return Results.Redirect($"{panel}/youtube-account?error=missing_client");
 
             var state = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
                 .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
             string consentUrl;
             try { consentUrl = await oauth.BuildConsentUrlAsync(clientId.Value, state, ct); }
-            catch (Exception ex) { return Results.Redirect($"{panel}/accounts?error={Uri.EscapeDataString(ex.Message)}"); }
+            catch (Exception ex) { return Results.Redirect($"{panel}/youtube-account?error={Uri.EscapeDataString(ex.Message)}"); }
 
             var cookie = new CookieOptions
             {
@@ -57,20 +57,20 @@ public static class GoogleOAuthEndpoints
 
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state) || string.IsNullOrEmpty(expected) ||
                 !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(state), Encoding.UTF8.GetBytes(expected)))
-                return Results.Redirect($"{panel}/accounts?error=invalid_state");
+                return Results.Redirect($"{panel}/youtube-account?error=invalid_state");
 
             if (!Guid.TryParse(clientCookie, out var clientId))
-                return Results.Redirect($"{panel}/accounts?error=invalid_state");
+                return Results.Redirect($"{panel}/youtube-account?error=invalid_state");
 
             try
             {
                 await oauth.ExchangeAndStoreAsync(clientId, code, ct);
-                return Results.Redirect($"{panel}/accounts?connected=1");
+                return Results.Redirect($"{panel}/youtube-account?connected=1");
             }
             catch (Exception ex)
             {
                 loggerFactory.CreateLogger("Google.OAuth").LogError(ex, "Google OAuth callback failed");
-                return Results.Redirect($"{panel}/accounts?error={Uri.EscapeDataString(ex.Message)}");
+                return Results.Redirect($"{panel}/youtube-account?error={Uri.EscapeDataString(ex.Message)}");
             }
         });
     }

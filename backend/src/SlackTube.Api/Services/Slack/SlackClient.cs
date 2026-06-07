@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
+using SlackTube.Api.Services.Jobs;
 
 namespace SlackTube.Api.Services.Slack;
 
@@ -20,6 +21,7 @@ public sealed record SlackOAuthResult(
 public sealed class SlackClient(
     HttpClient http,
     IOptions<SlackOptions> slackOptions,
+    IApiUsageService usage,
     ILogger<SlackClient> logger)
 {
     private const string ApiBase = "https://slack.com/api/";
@@ -57,6 +59,17 @@ public sealed class SlackClient(
     {
         var root = await CallAsync(botToken, "chat.delete", new() { ["channel"] = channel, ["ts"] = ts }, ct);
         return root is not null && root.Value.GetProperty("ok").GetBoolean();
+    }
+
+    /// <summary>Pins a message in a channel (pins.add). Requires the <c>pins:write</c> scope — without it
+    /// Slack returns <c>missing_scope</c> (logged, non-fatal: the message stays posted, just unpinned).
+    /// <c>already_pinned</c> is treated as success.</summary>
+    public async Task<bool> PinMessageAsync(string botToken, string channel, string ts, CancellationToken ct = default)
+    {
+        var root = await CallAsync(botToken, "pins.add", new() { ["channel"] = channel, ["timestamp"] = ts }, ct);
+        if (root is null) return false;
+        if (root.Value.TryGetProperty("ok", out var ok) && ok.GetBoolean()) return true;
+        return root.Value.TryGetProperty("error", out var er) && er.GetString() == "already_pinned";
     }
 
     /// <summary>Lists the workspace channels the bot can see — public channels plus any PRIVATE
@@ -111,6 +124,7 @@ public sealed class SlackClient(
             ["client_secret"] = _opt.ClientSecret,
             ["redirect_uri"] = redirectUri,
         };
+        await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack("oauth.v2.access"));
         using var res = await http.PostAsync(ApiBase + "oauth.v2.access", new FormUrlEncodedContent(form), ct);
         var body = await res.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(body);
@@ -135,6 +149,7 @@ public sealed class SlackClient(
     {
         try
         {
+            await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack("response_url"));
             using var res = await http.PostAsJsonAsync(responseUrl, payload, JsonOpts, ct);
             if (!res.IsSuccessStatusCode)
                 logger.LogWarning("Slack response_url POST failed: {Status}", res.StatusCode);
@@ -154,6 +169,8 @@ public sealed class SlackClient(
             logger.LogWarning("No Slack bot token available — skipping {Method}", method);
             return null;
         }
+
+        await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack(method));
 
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -197,6 +214,8 @@ public sealed class SlackClient(
             logger.LogWarning("No Slack bot token available — skipping {Method}", method);
             return null;
         }
+
+        await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack(method));
 
         for (var attempt = 0; attempt < 3; attempt++)
         {
