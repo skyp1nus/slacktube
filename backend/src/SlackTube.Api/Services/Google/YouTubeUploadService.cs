@@ -2,6 +2,7 @@ using Google.Apis.Services;
 using Google.Apis.Upload;
 using Google.Apis.YouTube.v3;
 using Google.Apis.YouTube.v3.Data;
+using SlackTube.Api.Services.Slack;
 
 namespace SlackTube.Api.Services.Google;
 
@@ -109,7 +110,9 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
     internal static string NormalizeDescription(string? description)
     {
         if (string.IsNullOrEmpty(description)) return string.Empty;
-        var d = StripAngleBrackets(description);
+        // Also strip + convert at upload time (not just parse) so jobs queued before these fixes existed still
+        // upload clean text. Idempotent — already-unwrapped/converted text has nothing left to change.
+        var d = SlackEmoji.ShortcodesToUnicode(StripAngleBrackets(description));
         return d.Length <= MaxDescriptionLength ? d : d[..MaxDescriptionLength];
     }
 
