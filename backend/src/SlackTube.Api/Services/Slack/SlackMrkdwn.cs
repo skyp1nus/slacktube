@@ -25,7 +25,9 @@ public static partial class SlackMrkdwn
         // Decode Slack's HTML escapes for literal characters the user typed.
         s = s.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&amp;", "&");
         // Final guard: any '<'/'>' still present is a literal YouTube would reject — strip it.
-        return s.Replace("<", string.Empty).Replace(">", string.Empty);
+        s = s.Replace("<", string.Empty).Replace(">", string.Empty);
+        // Slack delivers standard emoji as :shortcodes: — convert to Unicode so YouTube shows 🔥, not ":fire:".
+        return SlackEmoji.ShortcodesToUnicode(s);
     }
 
     private static string Expand(Match m)

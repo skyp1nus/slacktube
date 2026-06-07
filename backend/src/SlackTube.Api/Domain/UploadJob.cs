@@ -40,8 +40,12 @@ public class UploadJob
     public long BytesTransferred { get; set; }
     public string? OriginalFileName { get; set; }
 
+    /// <summary>When the Drive download began (transition into <see cref="JobState.Downloading"/>) — the start
+    /// of the active download+upload clock. Null until then; set once (a crash-resume keeps the first value).</summary>
+    public DateTimeOffset? DownloadStartedAt { get; set; }
+
     /// <summary>When the YouTube upload actually started (transition into <see cref="JobState.Uploading"/>).
-    /// Null until then. Used to report the upload start time and the upload→done duration in Slack.</summary>
+    /// Null until then. Used to split the reported duration into download vs upload phases in Slack.</summary>
     public DateTimeOffset? UploadStartedAt { get; set; }
 
     // ---- YouTube result --------------------------------------------------------------

@@ -192,6 +192,16 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// ---- recurring: re-render channel statuses so >24h recent items expire without new activity ----
+using (var scope = app.Services.CreateScope())
+{
+    var recurring = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+    recurring.AddOrUpdate<ISlackStatusService>(
+        "slack-status-refresh",
+        s => s.RefreshAllInPlaceAsync(CancellationToken.None),
+        "*/30 * * * *"); // every 30 min (UTC); an item crossing 24h drops within ≤30 min
+}
+
 app.MapGet("/", () => Results.Ok(new { service = "SlackTube", status = "ok" }));
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 

@@ -26,6 +26,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         job.HasIndex(x => x.SlackEventId);
         job.HasIndex(x => x.State);
         job.HasIndex(x => x.CreatedAt);
+        // Serves the per-channel status queries (recent + last-24h count), now also run on a 30-min timer
+        // across every channel: filter by SlackChannelId + UpdatedAt range, DESC sort (backward index scan).
+        job.HasIndex(x => new { x.SlackChannelId, x.UpdatedAt });
         job.HasMany(x => x.History)
            .WithOne(h => h.Job!)
            .HasForeignKey(h => h.JobId)

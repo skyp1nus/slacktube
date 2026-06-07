@@ -15,6 +15,10 @@ public interface ISlackStatusService
 
     /// <summary>Active job progressed: edit that job's channel status message in place (throttled).</summary>
     Task UpdateProgressAsync(Guid jobId, CancellationToken ct = default);
+
+    /// <summary>Periodically re-render every channel's status IN PLACE (edit, no repost/bump) so the
+    /// time-bounded recent list (last 24h) prunes itself even when no new job activity triggers a refresh.</summary>
+    Task RefreshAllInPlaceAsync(CancellationToken ct = default);
 }
 
 /// <summary>
@@ -50,6 +54,29 @@ public sealed class SlackStatusService(
             }
         }
         catch (Exception ex) { logger.LogWarning(ex, "Slack status refresh failed"); }
+        finally { _gate.Release(); }
+    }
+
+    public async Task RefreshAllInPlaceAsync(CancellationToken ct = default)
+    {
+        if (!await _gate.WaitAsync(TimeSpan.FromSeconds(10), ct)) return;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var sp = scope.ServiceProvider;
+            var routes = await sp.GetRequiredService<ChannelMappingService>().ListRoutesAsync(ct);
+            foreach (var r in routes)
+            {
+                // Isolate each channel — a transient network/parse/DB fault on one must not skip the rest.
+                try
+                {
+                    // repost:false ⇒ chat.update an existing message (no delete/bump); posts only if none exists yet.
+                    await PublishChannelAsync(sp, r.SlackChannelId, r.GoogleAccountId, repost: false, ct);
+                }
+                catch (Exception ex) { logger.LogWarning(ex, "Periodic status refresh failed for {Channel}", r.SlackChannelId); }
+            }
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Slack status periodic refresh failed"); }
         finally { _gate.Release(); }
     }
 
@@ -97,7 +124,14 @@ public sealed class SlackStatusService(
         }
         else if (!string.IsNullOrEmpty(ts))
         {
-            await slack.UpdateMessageAsync(botToken, channelId, ts, text, blocks, ct);
+            // Edit in place. If the message is gone (chat.update → message_not_found), drop the stale ts and
+            // repost so the channel self-heals instead of staying blank across every periodic refresh.
+            if (!await slack.UpdateMessageAsync(botToken, channelId, ts, text, blocks, ct))
+            {
+                var newTs = await slack.PostMessageAsync(botToken, channelId, text, blocks, ct: ct);
+                if (newTs is not null) await db.StringSetAsync(tsKey, newTs);
+                else await db.KeyDeleteAsync(tsKey);
+            }
         }
         else
         {
@@ -145,7 +179,7 @@ public sealed class SlackStatusService(
 
         var queued = snap.Queued.Select(q => new QueuedJobView(q.Id, DisplayName(q))).ToList();
         var recent = snap.Recent
-            .Select(d => new DoneJobView(DisplayName(d), d.State, d.YouTubeUrl, d.YouTubeVideoId, d.ErrorMessage, d.UploadStartedAt, d.UpdatedAt))
+            .Select(d => new DoneJobView(DisplayName(d), d.State, d.YouTubeUrl, d.YouTubeVideoId, d.ErrorMessage, d.DownloadStartedAt, d.UploadStartedAt, d.UpdatedAt))
             .ToList();
 
         return new StatusView(remainingUploads, totalUploads, active, queued, recent, snap.UploadedLast24h, channelTitle);

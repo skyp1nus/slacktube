@@ -11,7 +11,7 @@ public sealed record QueuedJobView(Guid Id, string FileName);
 
 public sealed record DoneJobView(
     string FileName, JobState State, string? YouTubeUrl, string? YouTubeVideoId, string? Error,
-    DateTimeOffset? UploadStartedAt, DateTimeOffset CompletedAt);
+    DateTimeOffset? DownloadStartedAt, DateTimeOffset? UploadStartedAt, DateTimeOffset CompletedAt);
 
 public sealed record StatusView(
     int RemainingUploads,
@@ -169,26 +169,41 @@ public static class SlackBlocks
         _ => $":x: *{Escape(d.FileName)}* — failed{(string.IsNullOrEmpty(d.Error) ? "" : $": {Escape(d.Error!)}")}",
     };
 
-    /// <summary>For a finished upload, append when the YouTube upload started and how long it took
-    /// (upload → done). The start time renders in each viewer's own timezone via Slack's <c>&lt;!date&gt;</c>
-    /// token; empty when the job never reached the upload phase.</summary>
+    /// <summary>For a finished upload, append when work started and how long it took END-TO-END (Drive
+    /// download → YouTube upload), split into ⬇ download and ⬆ upload when both phases are known. The clock
+    /// starts at the download (falls back to the upload start for jobs predating download timing). The start
+    /// renders in each viewer's own timezone via Slack's <c>&lt;!date&gt;</c> token; empty if neither is set.</summary>
     private static string Timing(DoneJobView d)
     {
-        if (d.UploadStartedAt is not { } start) return "";
-        var unix = start.ToUnixTimeSeconds();
-        var fallback = start.UtcDateTime.ToString("MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture);
+        if ((d.DownloadStartedAt ?? d.UploadStartedAt) is not { } began) return "";
+        var unix = began.ToUnixTimeSeconds();
+        var fallback = began.UtcDateTime.ToString("MMM d, HH:mm 'UTC'", CultureInfo.InvariantCulture);
         var started = $"<!date^{unix}^{{date_short_pretty}} {{time}}|{fallback}>";
-        var took = d.CompletedAt > start ? $" · took {Duration(d.CompletedAt - start)}" : "";
-        return $" · :stopwatch: started {started}{took}";
+        return $" · :stopwatch: started {started}{TookSuffix(d.DownloadStartedAt, d.UploadStartedAt, d.CompletedAt)}";
+    }
+
+    /// <summary>The " · took 2m 13s (⬇ 1m 40s · ⬆ 33s)" suffix: total elapsed from the start of work (download
+    /// start, or upload start for jobs predating download timing) to completion, split into download vs upload
+    /// when the upload boundary sits strictly between the two ends. Empty when there is no usable interval.</summary>
+    internal static string TookSuffix(DateTimeOffset? downloadStart, DateTimeOffset? uploadStart, DateTimeOffset completed)
+    {
+        if ((downloadStart ?? uploadStart) is not { } began || completed <= began) return "";
+        if (downloadStart is { } dl && uploadStart is { } ul && ul > dl && completed > ul)
+        {
+            // Derive the total from the same truncated phase seconds so ⬇ + ⬆ always equals the shown total.
+            var down = (int)(ul - dl).TotalSeconds;
+            var up = (int)(completed - ul).TotalSeconds;
+            return $" · took {Duration(down + up)} (:arrow_down: {Duration(down)} · :arrow_up: {Duration(up)})";
+        }
+        return $" · took {Duration((int)(completed - began).TotalSeconds)}";
     }
 
     /// <summary>Humanizes a duration like "2m 13s" / "1h 4m" / "45s".</summary>
-    private static string Duration(TimeSpan span)
+    private static string Duration(int totalSeconds)
     {
-        var total = (int)span.TotalSeconds;
-        if (total >= 3600) return $"{total / 3600}h {total % 3600 / 60}m";
-        if (total >= 60) return $"{total / 60}m {total % 60}s";
-        return $"{total}s";
+        if (totalSeconds >= 3600) return $"{totalSeconds / 3600}h {totalSeconds % 3600 / 60}m";
+        if (totalSeconds >= 60) return $"{totalSeconds / 60}m {totalSeconds % 60}s";
+        return $"{totalSeconds}s";
     }
 
     private static string Bar(int percent)

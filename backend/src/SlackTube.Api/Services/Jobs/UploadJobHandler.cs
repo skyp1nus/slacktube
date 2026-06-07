@@ -94,6 +94,8 @@ public sealed class UploadJobHandler(
             var chunkBytes = Math.Max(1, uploadSettings.ChunkSizeMb) * 1024 * 1024;
 
             // ============================ DOWNLOAD ============================
+            // Start the active (download+upload) clock; ??= so a crash-resume keeps the original start.
+            job.DownloadStartedAt ??= DateTimeOffset.UtcNow;
             await jobs.TransitionAsync(job, JobState.Downloading, "download started", ct);
             await status.RefreshQueueAsync(ct);
 
