@@ -20,7 +20,9 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             ApplicationName = "SlackTube",
         });
 
-    /// <summary>The authenticated account's own channel id + title + avatar (channels.list?mine=true, ~1 unit).</summary>
+    /// <summary>The authenticated account's own channel id + title + avatar (channels.list?mine=true, ~1 unit).
+    /// The single caller (<c>GoogleOAuthService.ExchangeAndStoreAsync</c>) meters this against the unit pool;
+    /// any new caller must charge <c>IQuotaService.ChargeUnitsAsync</c> too.</summary>
     public async Task<(string? Id, string? Title, string? AvatarUrl)> GetChannelInfoAsync(
         string clientId, string clientSecret, string refreshToken, CancellationToken ct = default)
     {

@@ -20,8 +20,9 @@ function usagePercent(used: number, limit: number): number {
 }
 
 export function AccountCard({ account }: { account: GoogleAccountDto }) {
-  const { usedUnits, capUnits } = account.quota;
-  const percent = usagePercent(usedUnits, capUnits);
+  const { usedUploads, uploadLimit, remainingUploads, totalUploads, usedUnits, capUnits } = account.quota;
+  // Upload capacity is gated by the videos.insert daily bucket, not the unit pool.
+  const percent = usagePercent(usedUploads, uploadLimit);
 
   return (
     <Card>
@@ -68,16 +69,21 @@ export function AccountCard({ account }: { account: GoogleAccountDto }) {
 
       <CardContent className="space-y-1.5 py-3">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Project quota today (PT, shared)</span>
+          <span className="text-muted-foreground">Project uploads today (PT, shared)</span>
           <span className={cn("font-medium tabular-nums", percent >= 90 && "text-destructive")}>{percent}%</span>
         </div>
         <Progress
           value={percent}
           className={cn(percent >= 90 && "[&>[data-slot=progress-indicator]]:bg-destructive")}
         />
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {nf.format(usedUnits)} / {nf.format(capUnits)} units
-        </span>
+        <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
+          <span>
+            {remainingUploads} of {totalUploads} uploads left today
+          </span>
+          <span title="Separate ~10k/day pool for non-upload API calls (list/search)">
+            {nf.format(usedUnits)} / {nf.format(capUnits)} units
+          </span>
+        </div>
       </CardContent>
     </Card>
   );

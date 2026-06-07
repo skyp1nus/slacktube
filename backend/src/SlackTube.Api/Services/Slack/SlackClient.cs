@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
+using SlackTube.Api.Services.Jobs;
 
 namespace SlackTube.Api.Services.Slack;
 
@@ -20,6 +21,7 @@ public sealed record SlackOAuthResult(
 public sealed class SlackClient(
     HttpClient http,
     IOptions<SlackOptions> slackOptions,
+    IApiUsageService usage,
     ILogger<SlackClient> logger)
 {
     private const string ApiBase = "https://slack.com/api/";
@@ -122,6 +124,7 @@ public sealed class SlackClient(
             ["client_secret"] = _opt.ClientSecret,
             ["redirect_uri"] = redirectUri,
         };
+        await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack("oauth.v2.access"));
         using var res = await http.PostAsync(ApiBase + "oauth.v2.access", new FormUrlEncodedContent(form), ct);
         var body = await res.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(body);
@@ -146,6 +149,7 @@ public sealed class SlackClient(
     {
         try
         {
+            await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack("response_url"));
             using var res = await http.PostAsJsonAsync(responseUrl, payload, JsonOpts, ct);
             if (!res.IsSuccessStatusCode)
                 logger.LogWarning("Slack response_url POST failed: {Status}", res.StatusCode);
@@ -165,6 +169,8 @@ public sealed class SlackClient(
             logger.LogWarning("No Slack bot token available — skipping {Method}", method);
             return null;
         }
+
+        await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack(method));
 
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -208,6 +214,8 @@ public sealed class SlackClient(
             logger.LogWarning("No Slack bot token available — skipping {Method}", method);
             return null;
         }
+
+        await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack(method));
 
         for (var attempt = 0; attempt < 3; attempt++)
         {

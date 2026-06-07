@@ -47,7 +47,8 @@ public class UploadJob
     // ---- YouTube result --------------------------------------------------------------
     public string? YouTubeVideoId { get; set; }
     public string? YouTubeUrl { get; set; }
-    /// <summary>Quota units charged against the daily cap for this job (~1600 per upload).</summary>
+    /// <summary>videos.insert calls charged against the project's daily upload bucket for this job (1 per
+    /// upload). Column name kept for migration stability; the unit-cost model it once held is retired.</summary>
     public int QuotaUnitsCharged { get; set; }
 
     // ---- Infra -----------------------------------------------------------------------

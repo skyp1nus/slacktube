@@ -55,7 +55,7 @@ public sealed class SlackIngestService(
         DriveFileInfo info;
         try
         {
-            info = await drive.GetInfoAsync(drive.BuildService(creds.ClientId, creds.ClientSecret, creds.RefreshToken), parsed.DriveFileId!, ct);
+            info = await drive.GetInfoAsync(drive.BuildService(creds.ClientId, creds.ClientSecret, creds.RefreshToken), parsed.DriveFileId!, creds.OAuthClientId, ct);
         }
         catch (Exception ex)
         {

@@ -9,7 +9,14 @@ type Status = {
   slackConfigured: boolean;
   workspaceCount: number;
   google: { connected: boolean; accountCount?: number };
-  quota: { usedUnits: number; capUnits: number; remainingUploads: number; totalUploads: number };
+  quota: {
+    usedUploads: number;
+    uploadLimit: number;
+    remainingUploads: number;
+    totalUploads: number;
+    usedUnits: number;
+    capUnits: number;
+  };
 };
 
 export default async function SettingsPage() {
@@ -67,10 +74,10 @@ export default async function SettingsPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className="w-32 text-muted-foreground">Quota today (PT)</span>
+            <span className="w-32 text-muted-foreground">Uploads today (PT)</span>
             {status ? (
               <Badge variant="outline">
-                {status.quota.usedUnits.toLocaleString()} / {status.quota.capUnits.toLocaleString()} units used
+                {status.quota.remainingUploads.toLocaleString()} / {status.quota.totalUploads.toLocaleString()} uploads left
               </Badge>
             ) : (
               "—"

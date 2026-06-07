@@ -51,18 +51,21 @@ public sealed class AppOptions
     /// <summary>Web admin panel origin — OAuth callbacks bounce the browser back here.</summary>
     public string AdminPanelUrl { get; set; } = "http://localhost:3000";
     public string TempDownloadDir { get; set; } = "./tmp";
-    /// <summary>YouTube daily quota cap in units (default ~10000).</summary>
+    /// <summary>Per-project daily upload ceiling: <c>videos.insert</c> has its OWN daily bucket (Google's
+    /// default is 100 calls/project/day), separate from the unit pool below. This — not the unit math — is
+    /// what gates how many videos a single OAuth client can upload per Pacific-Time day.</summary>
+    public int YouTubeDailyUploadLimit { get; set; } = 100;
+    /// <summary>Daily quota for all NON-upload endpoints (list/search/etc.) in units (Google default ~10000).
+    /// Uploads do not draw from this pool; it is surfaced only as an informational meter.</summary>
     public int YouTubeDailyQuotaUnits { get; set; } = 10000;
-    /// <summary>Cost of one videos.insert (~1600 units).</summary>
-    public int YouTubeUploadCostUnits { get; set; } = 1600;
+    /// <summary>Reference daily Drive API query ceiling per project for the usage display (Google's default is
+    /// effectively ~1,000,000,000/day). Informational only — Drive calls are never gated.</summary>
+    public long DriveDailyQueryLimit { get; set; } = 1_000_000_000;
 
     /// <summary>Drive download + YouTube upload chunk size in MB. Bigger = fewer HTTP round-trips
     /// (faster on large files / high-latency links) at the cost of more RAM and bigger re-sends on a
     /// transient error. Every whole MB is a valid multiple of YouTube's 256 KB chunk requirement.</summary>
     public int TransferChunkSizeMb { get; set; } = 64;
-
-    /// <summary>Whole uploads that still fit under today's cap.</summary>
-    public int DailyUploadCapacity => YouTubeDailyQuotaUnits / YouTubeUploadCostUnits;
 
     /// <summary>Transfer chunk size in bytes (clamped to ≥1 MB).</summary>
     public int TransferChunkSizeBytes => (TransferChunkSizeMb < 1 ? 1 : TransferChunkSizeMb) * 1024 * 1024;

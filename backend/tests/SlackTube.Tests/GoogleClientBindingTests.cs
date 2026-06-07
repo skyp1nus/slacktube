@@ -4,6 +4,7 @@ using SlackTube.Api.Configuration;
 using SlackTube.Api.Data;
 using SlackTube.Api.Domain;
 using SlackTube.Api.Services.Google;
+using SlackTube.Api.Services.Jobs;
 using SlackTube.Api.Services.Secrets;
 using Xunit;
 
@@ -254,7 +255,16 @@ public class GoogleClientBindingTests
     {
         var factory = new GoogleCredentialFactory();
         var youtube = new YouTubeUploadService(factory);
-        return new GoogleOAuthService(factory, clients, Options.Create(new GoogleOptions()), db, protector, youtube);
+        return new GoogleOAuthService(factory, clients, Options.Create(new GoogleOptions()), db, protector, youtube, new NoOpQuota());
+    }
+
+    /// <summary>Quota is irrelevant to client-binding behaviour — a no-op stand-in keeps the ctor happy.</summary>
+    private sealed class NoOpQuota : IQuotaService
+    {
+        public Task<QuotaStatus> GetStatusAsync(Guid? oauthClientId) => Task.FromResult(new QuotaStatus(0, 0, 0, 0));
+        public Task<bool> TryReserveUploadAsync(Guid oauthClientId) => Task.FromResult(true);
+        public Task ReleaseUploadAsync(Guid oauthClientId) => Task.CompletedTask;
+        public Task ChargeUnitsAsync(Guid oauthClientId, int units) => Task.CompletedTask;
     }
 
     private static GoogleAccount AddAccount(AppDbContext db, ISecretProtector protector, Guid clientId, string channel, string token)

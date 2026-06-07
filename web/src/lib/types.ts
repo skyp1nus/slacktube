@@ -28,11 +28,15 @@ export type MemberChannelDto = {
   workspaceName: string;
 };
 
+/** Two separate per-project/day buckets: the upload bucket (videos.insert calls — the real daily gate)
+ * and the unit pool (non-upload endpoints — an informational meter). They do not share a budget. */
 export type QuotaDto = {
-  usedUnits: number;
-  capUnits: number;
+  usedUploads: number;
+  uploadLimit: number;
   remainingUploads: number;
   totalUploads: number;
+  usedUnits: number;
+  capUnits: number;
 };
 
 /** A YouTube/Google OAuth client = one Google Cloud project. Its daily quota is the real cap,
@@ -118,9 +122,26 @@ export type DashboardStats = {
   uploadsToday: number;
   uploadsLast24h: number;
   errorsLast24h: number;
+  /** Upload bucket (the real daily gate): videos.insert calls used / cap, summed across projects. */
+  quotaUploadsUsed: number;
+  quotaUploadCap: number;
+  /** Unit pool (non-upload endpoints) — informational meter, summed across projects. */
   quotaUsedUnits: number;
   quotaCapUnits: number;
 };
+
+/** Daily API-usage report (GET /api/admin/usage) — spend across every external API, resets PT midnight. */
+export type UsageScope = { scope: string; used: number; limit: number | null };
+export type UsageMetric = {
+  key: string;
+  label: string;
+  unit: string; // "uploads" | "units" | "queries" | "bytes" | "calls"
+  used: number;
+  limit: number | null;
+  perScope: UsageScope[];
+};
+export type UsageGroup = { group: string; metrics: UsageMetric[] };
+export type UsageReport = { date: string; groups: UsageGroup[] };
 
 /** Job lifecycle states (matches the backend JobState enum names). */
 export const JOB_STATES = [

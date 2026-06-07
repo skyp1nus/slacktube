@@ -66,7 +66,6 @@ public sealed class UploadJobHandler(
 
         // Rotation/quota bookkeeping, visible to the catch blocks for release + error flagging.
         Guid? reservedClientId = null;
-        int reservedUnits = 0;
         Guid? activeAccountId = null;
 
         try
@@ -99,7 +98,7 @@ public sealed class UploadJobHandler(
             await status.RefreshQueueAsync(ct);
 
             var driveService = drive.BuildService(downloadCreds.ClientId, downloadCreds.ClientSecret, downloadCreds.RefreshToken);
-            var info = await drive.GetInfoAsync(driveService, job.DriveFileId, ct);
+            var info = await drive.GetInfoAsync(driveService, job.DriveFileId, downloadCreds.OAuthClientId, ct);
             if (info.IsGoogleNative) { await FailAsync(job, "Drive file is a Google-native doc, not a video."); return; }
 
             job.OriginalFileName ??= info.Name;
@@ -130,7 +129,7 @@ public sealed class UploadJobHandler(
                                 downloadCts.Cancel();
                             }
                         }
-                    }, chunkBytes, downloadCts.Token);
+                    }, chunkBytes, downloadCreds.OAuthClientId, downloadCts.Token);
                 }
                 catch (OperationCanceledException) when (cancelledDuringDownload)
                 {
@@ -157,13 +156,12 @@ public sealed class UploadJobHandler(
                 return;
             }
             reservedClientId = chosen.OAuthClientId;
-            reservedUnits = appOptions.Value.YouTubeUploadCostUnits;
             activeAccountId = chosen.AccountId;
 
             // ==================== UPLOAD (point of no return) ====================
             await jobs.TransitionAsync(job, JobState.Uploading, "upload started", ct);
             job.GoogleAccountId = chosen.AccountId; // record which project/account actually uploaded
-            job.QuotaUnitsCharged = reservedUnits;
+            job.QuotaUnitsCharged = 1;              // one videos.insert call charged to the project's daily upload bucket
             job.UploadStartedAt = DateTimeOffset.UtcNow; // for the upload start time + upload→done duration in Slack
             await jobs.SaveAsync(job, ct);
             progress.Set(job.Id, new JobProgress(JobState.Uploading, 0, job.BytesTotal, PhaseUpload));
@@ -203,11 +201,11 @@ public sealed class UploadJobHandler(
         {
             logger.LogWarning("Upload job {Id} interrupted by shutdown", jobId);
             progress.Remove(jobId);
-            // Reserved units but no video id yet → the insert never completed; release so a restart
-            // doesn't strand the project's daily quota on an upload that produced nothing.
+            // Reserved an upload but no video id yet → the insert never completed; release so a restart
+            // doesn't strand the project's daily upload bucket on an upload that produced nothing.
             if (reservedClientId is not null && job.YouTubeVideoId is null)
             {
-                try { await quota.ReleaseAsync(reservedClientId.Value, reservedUnits); } catch { /* best effort */ }
+                try { await quota.ReleaseUploadAsync(reservedClientId.Value); } catch { /* best effort */ }
             }
             // Before the YouTube upload starts nothing exists on YouTube → re-queue so startup
             // recovery resumes it from scratch. Once Uploading/Processing it is the point of no
@@ -222,11 +220,11 @@ public sealed class UploadJobHandler(
         {
             logger.LogError(ex, "Upload job {Id} failed", jobId);
             progress.Remove(jobId);
-            // Reserved units but videos.insert never succeeded (no video id) → give the quota back so a
-            // failed attempt doesn't burn the project's daily cap (the counter is an estimate).
+            // Reserved an upload but videos.insert never succeeded (no video id) → give it back so a
+            // failed attempt doesn't burn the project's daily upload bucket (the counter is an estimate).
             if (reservedClientId is not null && job.YouTubeVideoId is null)
             {
-                try { await quota.ReleaseAsync(reservedClientId.Value, reservedUnits); } catch { /* best effort */ }
+                try { await quota.ReleaseUploadAsync(reservedClientId.Value); } catch { /* best effort */ }
             }
             // Revoked / wrong-client / unauthorized → flag the account so rotation skips it next time.
             if (activeAccountId is not null && job.YouTubeVideoId is null && IsAuthError(ex))
@@ -243,15 +241,15 @@ public sealed class UploadJobHandler(
         }
     }
 
-    /// <summary>Order the channel's projects by remaining quota (most headroom first) and reserve on the
-    /// first that still fits today's cap. Returns null when every project is exhausted. Internal +
+    /// <summary>Order the channel's projects by remaining uploads (most headroom first) and reserve on the
+    /// first that still fits today's upload bucket. Returns null when every project is exhausted. Internal +
     /// static so it can be unit-tested with a fake quota service (no Redis).</summary>
     internal static async Task<GoogleUploadCreds?> ReserveAcrossCandidatesAsync(
         IReadOnlyList<GoogleUploadCreds> candidates, IQuotaService quota)
     {
         var ranked = new List<(GoogleUploadCreds creds, int remaining)>(candidates.Count);
         foreach (var c in candidates)
-            ranked.Add((c, (await quota.GetStatusAsync(c.OAuthClientId)).RemainingUnits));
+            ranked.Add((c, (await quota.GetStatusAsync(c.OAuthClientId)).RemainingUploads));
         // OrderByDescending is a stable sort, so ties keep candidate order (oldest account first).
         foreach (var (creds, _) in ranked.OrderByDescending(r => r.remaining))
             if (await quota.TryReserveUploadAsync(creds.OAuthClientId))

@@ -54,6 +54,7 @@ builder.Services.AddSingleton<ISecretProtector, SecretProtector>();
 builder.Services.AddSingleton<IDedupService, DedupService>();
 builder.Services.AddSingleton<ICancellationFlags, CancellationFlags>();
 builder.Services.AddSingleton<IQuotaService, QuotaService>();
+builder.Services.AddSingleton<IApiUsageService, ApiUsageService>();
 builder.Services.AddSingleton<IProgressTracker, ProgressTracker>();
 builder.Services.AddSingleton<SlackSignatureVerifier>();
 builder.Services.AddSingleton<SlackTemplateParser>();

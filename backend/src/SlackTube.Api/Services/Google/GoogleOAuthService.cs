@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
 using SlackTube.Api.Data;
 using SlackTube.Api.Domain;
+using SlackTube.Api.Services.Jobs;
 using SlackTube.Api.Services.Secrets;
 
 namespace SlackTube.Api.Services.Google;
@@ -32,7 +33,8 @@ public sealed class GoogleOAuthService(
     IOptions<GoogleOptions> options,
     AppDbContext db,
     ISecretProtector protector,
-    YouTubeUploadService youtube)
+    YouTubeUploadService youtube,
+    IQuotaService quota)
 {
     /// <summary>Builds the consent URL for a specific OAuth client. The redirect URI stays the global
     /// one (every client must register the same <c>/google/oauth/callback</c>).</summary>
@@ -63,7 +65,11 @@ public sealed class GoogleOAuthService(
                 "Google returned no refresh token. Revoke prior access or re-consent (prompt=consent).");
 
         string? channelId = null, channelTitle = null, avatarUrl = null;
-        try { (channelId, channelTitle, avatarUrl) = await youtube.GetChannelInfoAsync(creds.ClientId, creds.ClientSecret, token.RefreshToken, ct); }
+        try
+        {
+            (channelId, channelTitle, avatarUrl) = await youtube.GetChannelInfoAsync(creds.ClientId, creds.ClientSecret, token.RefreshToken, ct);
+            await quota.ChargeUnitsAsync(oauthClientId, 1); // channels.list ≈ 1 unit against the non-upload pool
+        }
         catch { /* channel lookup is best-effort; the account still works for upload */ }
 
         var now = DateTimeOffset.UtcNow;
