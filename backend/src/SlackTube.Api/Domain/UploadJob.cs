@@ -26,6 +26,13 @@ public class UploadJob
     /// <summary>Stored as jsonb. Already trimmed/deduped/limit-checked by the parser.</summary>
     public List<string> Tags { get; set; } = new();
 
+    /// <summary>Slack <c>url_private</c> of an image attached to the template message — used as the video's
+    /// custom thumbnail (best-effort, set after upload). Null = no image → YouTube auto-generates a frame.
+    /// Presence implies a long-form video: Shorts don't take custom thumbnails (YouTube ignores them).</summary>
+    public string? ThumbnailUrl { get; set; }
+    /// <summary>MIME type of <see cref="ThumbnailUrl"/> (image/png | image/jpeg). Only these reach YouTube.</summary>
+    public string? ThumbnailMimeType { get; set; }
+
     // ---- State -----------------------------------------------------------------------
     public JobState State { get; set; } = JobState.Queued;
     public string? ErrorMessage { get; set; }

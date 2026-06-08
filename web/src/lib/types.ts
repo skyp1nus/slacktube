@@ -87,6 +87,10 @@ export type Visibility = "private" | "unlisted" | "public";
 export type SettingsDto = {
   defaultVisibility: Visibility;
   transferChunkSizeMb: number;
+  /** YouTube COPPA self-declaration. false = "No, not made for kids". */
+  madeForKids: boolean;
+  /** YouTube altered/synthetic (AI) content disclosure. false = "No". */
+  containsSyntheticMedia: boolean;
 };
 
 /** An upload job (one Slack template message). */

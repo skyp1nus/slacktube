@@ -12,7 +12,7 @@ namespace SlackTube.Api.Endpoints;
 
 public sealed record CreateMappingDto(Guid SlackWorkspaceId, string SlackChannelId, Guid GoogleAccountId);
 
-public sealed record UpdateSettingsDto(string? DefaultVisibility, int? TransferChunkSizeMb);
+public sealed record UpdateSettingsDto(string? DefaultVisibility, int? TransferChunkSizeMb, bool? MadeForKids, bool? ContainsSyntheticMedia);
 
 /// <summary>Create an OAuth client (Google Cloud project). The secret is write-only — never read back.</summary>
 public sealed record CreateGoogleClientDto(string Label, string ClientId, string ClientSecret);
@@ -66,7 +66,13 @@ public static class AdminApiEndpoints
         admin.MapGet("/settings", async (ISettingsStore settings, CancellationToken ct) =>
         {
             var s = await settings.GetUploadSettingsAsync(ct);
-            return Results.Ok(new { defaultVisibility = s.Visibility, transferChunkSizeMb = s.ChunkSizeMb });
+            return Results.Ok(new
+            {
+                defaultVisibility = s.Visibility,
+                transferChunkSizeMb = s.ChunkSizeMb,
+                madeForKids = s.MadeForKids,
+                containsSyntheticMedia = s.ContainsSyntheticMedia,
+            });
         });
 
         admin.MapPatch("/settings", async (UpdateSettingsDto dto, ISettingsStore settings, CancellationToken ct) =>
@@ -76,8 +82,16 @@ public static class AdminApiEndpoints
                 ? cur.Visibility
                 : YouTubeUploadService.NormalizeVisibility(dto.DefaultVisibility);
             var chunk = dto.TransferChunkSizeMb is null ? cur.ChunkSizeMb : Math.Clamp(dto.TransferChunkSizeMb.Value, 1, 1024);
-            await settings.UpdateUploadSettingsAsync(visibility, chunk, ct);
-            return Results.Ok(new { defaultVisibility = visibility, transferChunkSizeMb = chunk });
+            var madeForKids = dto.MadeForKids ?? cur.MadeForKids;
+            var synthetic = dto.ContainsSyntheticMedia ?? cur.ContainsSyntheticMedia;
+            await settings.UpdateUploadSettingsAsync(visibility, chunk, madeForKids, synthetic, ct);
+            return Results.Ok(new
+            {
+                defaultVisibility = visibility,
+                transferChunkSizeMb = chunk,
+                madeForKids,
+                containsSyntheticMedia = synthetic,
+            });
         });
 
         // ---- Slack workspaces (OAuth-installed) ----------------------------------------

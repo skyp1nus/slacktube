@@ -1,4 +1,5 @@
 using Google.Apis.Auth.OAuth2.Responses;
+using Google.Apis.YouTube.v3;
 using Hangfire;
 using Microsoft.Extensions.Options;
 using SlackTube.Api.Configuration;
@@ -37,6 +38,7 @@ public sealed class UploadJobHandler(
     private const string PhaseUpload = "Uploading to YouTube";
     private const string PhaseProcessing = "YouTube processing";
     private const long CancelCheckBytes = 4_000_000;
+    private const long MaxThumbnailBytes = 2L * 1024 * 1024; // YouTube's hard limit for thumbnails.set
 
     // Attempts=0: never auto-retry on failure (a failed upload must not silently re-upload).
     // DisableConcurrentExecution: a per-job lock so a restart-recovery re-enqueue can never run
@@ -186,6 +188,8 @@ public sealed class UploadJobHandler(
                         _ = status.UpdateProgressAsync(job.Id);
                     },
                     uploadSettings.Visibility,
+                    uploadSettings.MadeForKids,
+                    uploadSettings.ContainsSyntheticMedia,
                     chunkBytes,
                     ct);
             }
@@ -196,7 +200,10 @@ public sealed class UploadJobHandler(
             job.YouTubeUrl = result.Url;
             await jobs.TransitionAsync(job, JobState.Done, "done", ct);
             progress.Remove(job.Id);
-            await NotifyAsync(job, $":white_check_mark: Uploaded *{job.Title}* (private) → {result.Url}");
+
+            // Custom thumbnail is best-effort and runs AFTER the video exists — it must never fail the job.
+            var thumbNote = await TrySetThumbnailAsync(job, ytService, result.VideoId, ct);
+            await NotifyAsync(job, $":white_check_mark: Uploaded *{job.Title}* (private) → {result.Url}{thumbNote}");
             await status.RefreshQueueAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -282,6 +289,45 @@ public sealed class UploadJobHandler(
         await jobs.TransitionAsync(job, JobState.Cancelled, "cancelled by user", CancellationToken.None);
         await NotifyAsync(job, $":no_entry_sign: *{job.OriginalFileName ?? job.Title}* — cancelled.");
         await status.RefreshQueueAsync(CancellationToken.None);
+    }
+
+    /// <summary>Best-effort custom thumbnail. The video already exists when this runs, so ANY failure is
+    /// non-fatal — we log, never fail the job, and return a short suffix for the Slack success line.
+    /// No image attached → empty suffix (YouTube auto-generates a frame, exactly the old behaviour).
+    /// A provided-but-unapplicable image (wrong format / &gt;2MB / API reject) gets a ⚠️ note so the
+    /// operator knows to add one in Studio. Shorts silently ignore thumbnails, so a vertical/≤3min upload
+    /// may report "set" yet still show the auto frame — we can't detect that from the API.</summary>
+    private async Task<string> TrySetThumbnailAsync(UploadJob job, YouTubeService ytService, string videoId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(job.ThumbnailUrl)) return string.Empty; // no image → auto-frame, no note
+        try
+        {
+            if (job.ThumbnailMimeType is not ("image/png" or "image/jpeg"))
+            {
+                logger.LogWarning("Job {Id} thumbnail mimetype unsupported: {Mime}", job.Id, job.ThumbnailMimeType);
+                return " · :warning: thumbnail skipped (PNG/JPG only)";
+            }
+
+            var token = await workspaces.GetBotTokenForChannelAsync(job.SlackChannelId);
+            if (token is null) return string.Empty;
+
+            var bytes = await slack.DownloadFileAsync(token, job.ThumbnailUrl, MaxThumbnailBytes, ct);
+            if (bytes is null)
+            {
+                logger.LogWarning("Job {Id} thumbnail download failed or exceeded 2MB", job.Id);
+                return " · :warning: thumbnail not applied (download failed or >2MB)";
+            }
+
+            await using var ms = new MemoryStream(bytes);
+            await youtube.SetThumbnailAsync(ytService, videoId, ms, job.ThumbnailMimeType, ct);
+            return " · thumbnail set";
+        }
+        catch (Exception ex)
+        {
+            // 403 (custom thumbnails not enabled on the channel), quota, network, etc. — video is fine.
+            logger.LogWarning(ex, "Job {Id} thumbnails.set failed (non-fatal)", job.Id);
+            return " · :warning: thumbnail not applied";
+        }
     }
 
     private async Task NotifyAsync(UploadJob job, string text)

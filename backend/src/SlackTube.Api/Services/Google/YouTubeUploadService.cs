@@ -51,6 +51,8 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
         Action<long> onBytes,
         Action onProcessing,
         string visibility,
+        bool madeForKids,
+        bool containsSyntheticMedia,
         int chunkSize,
         CancellationToken ct)
     {
@@ -63,7 +65,14 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
                 Tags = NormalizeTags(tags),
                 CategoryId = DefaultCategoryId,
             },
-            Status = new VideoStatus { PrivacyStatus = NormalizeVisibility(visibility) },
+            Status = new VideoStatus
+            {
+                PrivacyStatus = NormalizeVisibility(visibility),
+                // YouTube COPPA self-declaration: false = "No, not made for kids". madeForKids is read-only.
+                SelfDeclaredMadeForKids = madeForKids,
+                // Altered/synthetic (AI) content disclosure: false = "No". Settable since the Oct-2024 API rev.
+                ContainsSyntheticMedia = containsSyntheticMedia,
+            },
         };
 
         var request = service.Videos.Insert(video, "snippet,status", videoStream, "video/*");
@@ -94,6 +103,22 @@ public sealed class YouTubeUploadService(GoogleCredentialFactory factory)
             throw new InvalidOperationException("YouTube upload completed but returned no video id.");
 
         return new YouTubeUploadResult(videoId, $"https://youtu.be/{videoId}");
+    }
+
+    /// <summary>
+    /// Sets a custom thumbnail on an existing video (<c>thumbnails.set</c>, ~50 units). Best-effort:
+    /// returns false instead of throwing on a failed upload. The channel must have the custom-thumbnail
+    /// feature enabled (verified account) or YouTube returns 403. NOTE: YouTube silently IGNORES custom
+    /// thumbnails on Shorts — the call can report success yet the Short keeps its auto-generated frame.
+    /// </summary>
+    public async Task<bool> SetThumbnailAsync(
+        YouTubeService service, string videoId, Stream image, string contentType, CancellationToken ct = default)
+    {
+        var request = service.Thumbnails.Set(videoId, image, contentType);
+        var result = await request.UploadAsync(ct);
+        if (result.Status != UploadStatus.Completed)
+            throw new InvalidOperationException("thumbnails.set did not complete.", result.Exception);
+        return true;
     }
 
     // YouTube rejects any '<' or '>' in a title/description (invalidTitle / invalidDescription).

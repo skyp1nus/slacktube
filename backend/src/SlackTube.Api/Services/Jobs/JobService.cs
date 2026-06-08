@@ -15,7 +15,9 @@ public sealed record NewJob(
     string? Description,
     List<string> Tags,
     bool RequiresConfirmation,
-    Guid? GoogleAccountId);
+    Guid? GoogleAccountId,
+    string? ThumbnailUrl = null,
+    string? ThumbnailMimeType = null);
 
 public sealed record StatusSnapshot(
     UploadJob? Active,
@@ -55,6 +57,7 @@ public interface IJobService
 {
     Task<UploadJob> CreateAsync(NewJob input, CancellationToken ct = default);
     Task<bool> ExistsForEventAsync(string slackEventId, CancellationToken ct = default);
+    Task<bool> ExistsForChannelMessageAsync(string channelId, string ts, CancellationToken ct = default);
     Task<UploadJob?> GetAsync(Guid id, CancellationToken ct = default);
     Task TransitionAsync(UploadJob job, JobState to, string? note = null, CancellationToken ct = default);
     Task SaveAsync(UploadJob job, CancellationToken ct = default);
@@ -83,6 +86,8 @@ public sealed class JobService(AppDbContext db) : IJobService
             Title = i.Title,
             Description = i.Description,
             Tags = i.Tags,
+            ThumbnailUrl = i.ThumbnailUrl,
+            ThumbnailMimeType = i.ThumbnailMimeType,
             RequiresConfirmation = i.RequiresConfirmation,
             Confirmed = i.RequiresConfirmation ? null : true,
             State = JobState.Queued,
@@ -97,6 +102,11 @@ public sealed class JobService(AppDbContext db) : IJobService
 
     public Task<bool> ExistsForEventAsync(string slackEventId, CancellationToken ct = default)
         => db.Jobs.AnyAsync(j => j.SlackEventId == slackEventId, ct);
+
+    // One Slack post = one upload, even if Slack ever emits two events for it with different event_ids
+    // (e.g. a bare message + a file_share for the same image post). ts is unique per message in a channel.
+    public Task<bool> ExistsForChannelMessageAsync(string channelId, string ts, CancellationToken ct = default)
+        => db.Jobs.AnyAsync(j => j.SlackChannelId == channelId && j.SlackMessageTs == ts, ct);
 
     public Task<UploadJob?> GetAsync(Guid id, CancellationToken ct = default)
         => db.Jobs.FirstOrDefaultAsync(j => j.Id == id, ct);

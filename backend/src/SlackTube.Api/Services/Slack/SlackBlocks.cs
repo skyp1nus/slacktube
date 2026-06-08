@@ -138,6 +138,7 @@ public static class SlackBlocks
         ```
 
         *Video* is required (a Google Drive link or file id). *Tags* and *Description* are optional; *Description* must come last.
+        :frame_with_picture: *Thumbnail (optional):* attach a PNG/JPG image (≤2MB) to this same message to set it as the video's thumbnail. Long videos only — YouTube Shorts ignore custom thumbnails. No image → YouTube picks a frame.
         """;
 
     // ---- primitives ------------------------------------------------------------------

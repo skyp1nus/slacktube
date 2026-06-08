@@ -17,8 +17,10 @@ public static class SlackEndpoints
     // Public + private channels: read the list (channels:read/groups:read) + the message text
     // (channels:history/groups:history) + post the live status (chat:write). The bot only sees a
     // private channel after it's invited to it (/invite @bot) — Slack can't auto-join private channels.
+    // files:read lets the bot download an image attached to the template message (the custom thumbnail).
+    // NOTE: existing installs must REINSTALL (re-run OAuth) to grant files:read — older tokens lack it.
     private const string InstallScopes =
-        "chat:write,channels:read,channels:history,groups:read,groups:history,pins:write";
+        "chat:write,channels:read,channels:history,groups:read,groups:history,pins:write,files:read";
 
     public static void MapSlackEndpoints(this WebApplication app)
     {
@@ -115,20 +117,25 @@ public static class SlackEndpoints
         {
             var eventId = root.TryGetProperty("event_id", out var eid) ? eid.GetString() : null;
             var evType = ev.TryGetProperty("type", out var et) ? et.GetString() : null;
+            var subtype = ev.TryGetProperty("subtype", out var sub) ? sub.GetString() : null;
 
-            // Only plain user messages: skip bot messages, edits, joins, deletes, etc.
+            // Only plain user messages: skip bot messages, edits, joins, deletes, etc. A message that
+            // carries an attachment may arrive with subtype "file_share" (so the thumbnail image lands on
+            // the SAME message as the template) — accept it alongside the no-subtype case.
             var isPlainMessage = evType == "message"
-                && !ev.TryGetProperty("subtype", out _)
+                && (subtype is null || subtype == "file_share")
                 && !ev.TryGetProperty("bot_id", out _);
 
             if (isPlainMessage && eventId is not null && await dedup.TryClaimAsync(eventId))
             {
+                var (thumbUrl, thumbMime) = ExtractThumbnail(ev);
                 var msg = new SlackMessageRef(
                     eventId,
                     ev.TryGetProperty("channel", out var c) ? c.GetString() ?? "" : "",
                     ev.TryGetProperty("user", out var u) ? u.GetString() ?? "" : "",
                     ev.TryGetProperty("ts", out var ts) ? ts.GetString() ?? "" : "",
-                    ev.TryGetProperty("text", out var x) ? x.GetString() ?? "" : "");
+                    ev.TryGetProperty("text", out var x) ? x.GetString() ?? "" : "",
+                    thumbUrl, thumbMime);
 
                 backgroundJobs.Enqueue<SlackIngestService>(s => s.ProcessMessageAsync(msg, CancellationToken.None));
             }
@@ -278,4 +285,21 @@ public static class SlackEndpoints
         => responseUrl is null
             ? Task.CompletedTask
             : slack.PostToResponseUrlAsync(responseUrl, new { replace_original = true, text });
+
+    /// <summary>First PNG/JPEG file attached to the message → (url_private, mimetype) for use as the video
+    /// thumbnail. Returns (null, null) when no usable image is attached. Only png/jpeg (YouTube's formats)
+    /// are picked; other files (incl. the video link itself, which is text not a file) are ignored.</summary>
+    private static (string? Url, string? Mime) ExtractThumbnail(JsonElement ev)
+    {
+        if (!ev.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+            return (null, null);
+        foreach (var f in files.EnumerateArray())
+        {
+            var mime = f.TryGetProperty("mimetype", out var mt) ? mt.GetString() : null;
+            if ((mime == "image/png" || mime == "image/jpeg")
+                && f.TryGetProperty("url_private", out var up) && up.GetString() is { Length: > 0 } url)
+                return (url, mime);
+        }
+        return (null, null);
+    }
 }

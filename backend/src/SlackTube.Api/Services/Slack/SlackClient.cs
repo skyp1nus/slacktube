@@ -144,6 +144,51 @@ public sealed class SlackClient(
             root.TryGetProperty("authed_user", out var au) && au.TryGetProperty("id", out var auid) ? auid.GetString() : null);
     }
 
+    /// <summary>Downloads a Slack file's bytes from its <c>url_private</c> (needs the <c>files:read</c> scope
+    /// AND the bot to be a member of the file's channel). Best-effort: returns null on any failure or when
+    /// the response isn't an image — note that an unauthorized url_private returns a 200 HTML sign-in page,
+    /// so we reject any non-image content type. Caps the body at <paramref name="maxBytes"/>.</summary>
+    public async Task<byte[]?> DownloadFileAsync(string botToken, string urlPrivate, long maxBytes, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(botToken) || string.IsNullOrEmpty(urlPrivate)) return null;
+        await usage.IncrementAsync(ApiMetrics.SlackScope, ApiMetrics.Slack("files.download"));
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, urlPrivate);
+            req.Headers.Authorization = new("Bearer", botToken);
+            using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!res.IsSuccessStatusCode)
+            {
+                logger.LogWarning("Slack file download failed: {Status}", res.StatusCode);
+                return null;
+            }
+            // Unauthorized/missing-scope returns the HTML login page with 200 — guard on content type.
+            var mediaType = res.Content.Headers.ContentType?.MediaType;
+            if (mediaType is null || !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("Slack file download was not an image ({Type}) — likely missing files:read or not in channel", mediaType);
+                return null;
+            }
+            if (res.Content.Headers.ContentLength is { } cl && cl > maxBytes)
+            {
+                logger.LogWarning("Slack file download too large: {Bytes} > {Max}", cl, maxBytes);
+                return null;
+            }
+            var bytes = await res.Content.ReadAsByteArrayAsync(ct);
+            if (bytes.LongLength > maxBytes)
+            {
+                logger.LogWarning("Slack file download too large after read: {Bytes} > {Max}", bytes.LongLength, maxBytes);
+                return null;
+            }
+            return bytes;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Slack file download threw");
+            return null;
+        }
+    }
+
     /// <summary>Posts a follow-up to an interactivity response_url (no token needed).</summary>
     public async Task PostToResponseUrlAsync(string responseUrl, object payload, CancellationToken ct = default)
     {
