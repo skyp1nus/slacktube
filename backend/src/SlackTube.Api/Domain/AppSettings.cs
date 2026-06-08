@@ -27,5 +27,13 @@ public class AppSettings
     /// <summary>Drive download + YouTube upload chunk size (MB). Seeded from App config on first run.</summary>
     public int TransferChunkSizeMb { get; set; } = 64;
 
+    /// <summary>YouTube "made for kids" self-declaration (status.selfDeclaredMadeForKids).
+    /// Default false = "No, it's not made for kids".</summary>
+    public bool MadeForKids { get; set; }
+
+    /// <summary>YouTube altered/synthetic (AI) content disclosure (status.containsSyntheticMedia).
+    /// Default false = "No".</summary>
+    public bool ContainsSyntheticMedia { get; set; }
+
     public DateTimeOffset UpdatedAt { get; set; }
 }

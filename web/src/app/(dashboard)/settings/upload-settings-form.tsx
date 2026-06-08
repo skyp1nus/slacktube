@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 
 const VISIBILITY_OPTIONS: { value: Visibility; label: string; hint: string }[] = [
   { value: "private", label: "Private", hint: "only you, in YouTube Studio" },
@@ -23,15 +24,24 @@ export function UploadSettingsForm() {
 
   const [visibility, setVisibility] = useState<Visibility>("private");
   const [chunkMb, setChunkMb] = useState(64);
+  const [madeForKids, setMadeForKids] = useState(false);
+  const [containsSyntheticMedia, setContainsSyntheticMedia] = useState(false);
 
   useEffect(() => {
     if (data) {
       setVisibility(data.defaultVisibility);
       setChunkMb(data.transferChunkSizeMb);
+      setMadeForKids(data.madeForKids);
+      setContainsSyntheticMedia(data.containsSyntheticMedia);
     }
   }, [data]);
 
-  const dirty = data ? visibility !== data.defaultVisibility || chunkMb !== data.transferChunkSizeMb : false;
+  const dirty = data
+    ? visibility !== data.defaultVisibility ||
+      chunkMb !== data.transferChunkSizeMb ||
+      madeForKids !== data.madeForKids ||
+      containsSyntheticMedia !== data.containsSyntheticMedia
+    : false;
 
   return (
     <Card>
@@ -79,8 +89,39 @@ export function UploadSettingsForm() {
               </p>
             </div>
 
+            <div className="flex items-start justify-between gap-4 max-w-md">
+              <div className="space-y-0.5">
+                <Label htmlFor="madeForKids">Made for kids</Label>
+                <p className="text-xs text-muted-foreground">
+                  COPPA self-declaration. Off = &ldquo;No, it&rsquo;s not made for kids&rdquo;.
+                </p>
+              </div>
+              <Switch id="madeForKids" checked={madeForKids} onCheckedChange={setMadeForKids} />
+            </div>
+
+            <div className="flex items-start justify-between gap-4 max-w-md">
+              <div className="space-y-0.5">
+                <Label htmlFor="synthetic">Altered or synthetic content (AI)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Discloses realistic AI-generated / altered media. Off = &ldquo;No&rdquo;.
+                </p>
+              </div>
+              <Switch
+                id="synthetic"
+                checked={containsSyntheticMedia}
+                onCheckedChange={setContainsSyntheticMedia}
+              />
+            </div>
+
             <Button
-              onClick={() => update.mutate({ defaultVisibility: visibility, transferChunkSizeMb: chunkMb })}
+              onClick={() =>
+                update.mutate({
+                  defaultVisibility: visibility,
+                  transferChunkSizeMb: chunkMb,
+                  madeForKids,
+                  containsSyntheticMedia,
+                })
+              }
               disabled={!dirty || update.isPending}
             >
               {update.isPending ? "Saving…" : "Save"}

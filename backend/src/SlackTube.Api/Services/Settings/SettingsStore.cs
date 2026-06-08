@@ -7,7 +7,7 @@ using SlackTube.Api.Domain;
 namespace SlackTube.Api.Services.Settings;
 
 /// <summary>Upload defaults editable from the Settings tab.</summary>
-public sealed record UploadSettings(string Visibility, int ChunkSizeMb);
+public sealed record UploadSettings(string Visibility, int ChunkSizeMb, bool MadeForKids, bool ContainsSyntheticMedia);
 
 /// <summary>
 /// Reads/writes the singleton <see cref="AppSettings"/> row (listening channel + current status
@@ -22,7 +22,7 @@ public interface ISettingsStore
     Task<string?> GetStatusMessageTsAsync(CancellationToken ct = default);
     Task SetStatusMessageTsAsync(string? ts, CancellationToken ct = default);
     Task<UploadSettings> GetUploadSettingsAsync(CancellationToken ct = default);
-    Task UpdateUploadSettingsAsync(string visibility, int chunkSizeMb, CancellationToken ct = default);
+    Task UpdateUploadSettingsAsync(string visibility, int chunkSizeMb, bool madeForKids, bool containsSyntheticMedia, CancellationToken ct = default);
 }
 
 public sealed class SettingsStore(AppDbContext db, IOptions<AppOptions> appOptions) : ISettingsStore
@@ -47,14 +47,16 @@ public sealed class SettingsStore(AppDbContext db, IOptions<AppOptions> appOptio
     public async Task<UploadSettings> GetUploadSettingsAsync(CancellationToken ct = default)
     {
         var s = await GetOrCreateAsync(ct);
-        return new UploadSettings(s.DefaultVisibility, s.TransferChunkSizeMb);
+        return new UploadSettings(s.DefaultVisibility, s.TransferChunkSizeMb, s.MadeForKids, s.ContainsSyntheticMedia);
     }
 
-    public async Task UpdateUploadSettingsAsync(string visibility, int chunkSizeMb, CancellationToken ct = default)
+    public async Task UpdateUploadSettingsAsync(string visibility, int chunkSizeMb, bool madeForKids, bool containsSyntheticMedia, CancellationToken ct = default)
     {
         var s = await GetOrCreateAsync(ct);
         s.DefaultVisibility = visibility;
         s.TransferChunkSizeMb = chunkSizeMb;
+        s.MadeForKids = madeForKids;
+        s.ContainsSyntheticMedia = containsSyntheticMedia;
         s.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
     }

@@ -5,8 +5,12 @@ using SlackTube.Api.Services.Settings;
 
 namespace SlackTube.Api.Services.Slack;
 
-/// <summary>A plain Slack message we may turn into an upload job (passed through Hangfire).</summary>
-public sealed record SlackMessageRef(string EventId, string ChannelId, string UserId, string Ts, string Text);
+/// <summary>A plain Slack message we may turn into an upload job (passed through Hangfire).
+/// <paramref name="ThumbnailUrl"/>/<paramref name="ThumbnailMimeType"/> carry an image attached to the
+/// message (Slack <c>url_private</c>) to use as the video's custom thumbnail; null when none.</summary>
+public sealed record SlackMessageRef(
+    string EventId, string ChannelId, string UserId, string Ts, string Text,
+    string? ThumbnailUrl = null, string? ThumbnailMimeType = null);
 
 /// <summary>
 /// Stage 1 of the pipeline (runs as a Hangfire job so the HTTP endpoint can ACK in &lt;3s and the
@@ -28,8 +32,10 @@ public sealed class SlackIngestService(
     [AutomaticRetry(Attempts = 2)]
     public async Task ProcessMessageAsync(SlackMessageRef msg, CancellationToken ct)
     {
-        // Idempotent across Hangfire retries / Slack redeliveries.
+        // Idempotent across Hangfire retries / Slack redeliveries (by event_id) AND across distinct events
+        // for the same post (by channel+ts) — accepting file_share messages could otherwise double up.
         if (await jobs.ExistsForEventAsync(msg.EventId, ct)) return;
+        if (await jobs.ExistsForChannelMessageAsync(msg.ChannelId, msg.Ts, ct)) return;
 
         // Only mapped channels — resolve the target Google account from the mapping.
         var mapping = await mappings.GetByChannelAsync(msg.ChannelId, ct);
@@ -74,7 +80,8 @@ public sealed class SlackIngestService(
         var job = await jobs.CreateAsync(new NewJob(
             msg.EventId, msg.ChannelId, msg.UserId, msg.Ts,
             parsed.DriveFileId!, info.Name, Path.GetFileNameWithoutExtension(info.Name),
-            parsed.Description, parsed.Tags, requiresConfirm, mapping.GoogleAccountId), ct);
+            parsed.Description, parsed.Tags, requiresConfirm, mapping.GoogleAccountId,
+            msg.ThumbnailUrl, msg.ThumbnailMimeType), ct);
 
         if (parsed.Warnings.Count > 0)
             await ReplyAsync(msg, ":warning: " + string.Join("\n", parsed.Warnings), ct);
